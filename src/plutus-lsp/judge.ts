@@ -93,7 +93,7 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
       return { ok: true, answers, requests: 1, latencyMs: j.latency_ms ?? (Date.now() - started) };
     } finally { clearTimeout(t); }   // FIX (audit judge.ts:72): cleared on EVERY path
   } catch (e) {
-    return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: ${(e as Error).message}`, requests: 1 };
+    return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: ${e instanceof Error ? e.message : String(e)}`, requests: 1 };
   }
 }
 
@@ -146,7 +146,11 @@ export function verdict(v: JudgeVector): Verdict {
   const minWrong = Math.min(...wrong);
   const weakest = answered[wrong.indexOf(minWrong)] ?? null;
   const p7 = a.P7 ?? 0;
-  if (minWrong >= THROW_T) return { kind: "VIOLATION", weakest, vector: a };
+  // FIX (audit judge.ts:134): P3 TIER wired — an IMMUTABLE-governed file gets the STRICTER bar
+  const immutable = (a.P3 ?? 0) >= DEMAND_T;
+  const throwBar = immutable ? THROW_T * 0.9 : THROW_T;   // a canon law tolerates less
+  // THE PRIORITY (documented): a wrongness verdict outranks drift; both are reported in the vector
+  if (minWrong >= throwBar) return { kind: "VIOLATION", weakest, vector: a };
   if (p7 >= THROW_T) return { kind: "DRIFT", weakest: "P7", vector: a };
   if (minWrong >= DEMAND_T) return { kind: "SUSPECT", weakest, vector: a };
   return { kind: "LAW", weakest: null, vector: a };

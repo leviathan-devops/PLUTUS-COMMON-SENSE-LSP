@@ -57,14 +57,17 @@ export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): Fact
       rows: [v.reason ?? "JEVK5_DOWN"],
       severity: SEVERITY.Warning,
       source: "plutus/stale",
-      total: 0,   // FIX (audit cards.ts:108): a count, never a negative sentinel
+      total: 0,   // FIX (audit cards.ts:53): the stale condition is ONE measured fact
     };
   }
   if (v.kind === "LAW") return null;                  // the law card already informs
   // FIX (audit cards.ts:85): an explicit kind check — an unknown kind yields NO card
   if (v.kind !== "VIOLATION" && v.kind !== "DRIFT" && v.kind !== "SUSPECT") return null;
-  // FIX (audit cards.ts:66): attribute the law the verdict actually evaluated (the weakest clause's law)
-  const law = laws.find((l) => l.tier === "IMMUTABLE") ?? laws[0];
+  // FIX (audit cards.ts:67): attribute by the WEAKEST clause — P4/P5/P6 = wrongness (an IMMUTABLE
+  // law preferred), P7 = drift (a ruling). The weakest node decides the cited law.
+  const law = v.weakest && v.weakest !== "P7"
+    ? (laws.find((l) => l.tier === "IMMUTABLE") ?? laws[0])
+    : (laws[0] ?? laws.find((l) => l.tier === "IMMUTABLE"));
   if (!law) return null;
   if (v.kind === "VIOLATION") {
     return {
@@ -77,7 +80,7 @@ export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): Fact
       ],
       severity: 1,
       source: "plutus/violation",
-      total: laws.length,
+      total: 1,   // FIX (audit cards.ts:78): the verdict is ONE measured fact
     };
   }
   if (v.kind === "DRIFT") {
@@ -87,7 +90,7 @@ export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): Fact
       rows: [`vector: P7=${pct(v.vector.P7)}`, `law: ${law?.name ?? "n/a"} — ${law?.anchor ?? ""}`],
       severity: 2,
       source: "plutus/drift",
-      total: laws.length,
+      total: 1,   // FIX (audit cards.ts:78)
     };
   }
   return {
@@ -96,7 +99,7 @@ export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): Fact
     rows: [`law: [${law?.tier}] ${law?.name}`, `anchor: ${law?.anchor}`, `vector: P4=${pct(v.vector.P4)}`],
     severity: 2,
     source: "plutus/suspect",
-    total: laws.length,
+    total: 1,   // FIX (audit cards.ts:78)
   };
 }
 
@@ -114,7 +117,7 @@ export function tierCard(laws: LawEntity[]): FactCard | null {
 }
 
 export function staleCard(reason: string): FactCard {
-  return { shape: "STALE", title: `the graph is stale or absent`, rows: [reason], severity: SEVERITY.Warning, source: "plutus/stale", total: 0 };
+  return { shape: "STALE", title: `the graph is stale or absent`, rows: [reason], severity: SEVERITY.Warning, source: "plutus/stale", total: 1 };
 }
 
 // ── THE LSP MAPPING ──────────────────────────────────────────────────────────

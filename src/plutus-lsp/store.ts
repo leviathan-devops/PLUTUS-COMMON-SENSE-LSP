@@ -19,7 +19,9 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 
 // ── THE ROOT MARKERS (the spawn gate 2 — a project root must carry one) ──────
+// FIX (audit store.ts:22): the PROJECT-SPECIFIC markers first; the generic fallback is short-walk only
 export const ROOT_MARKERS = [".arsumbris", ".omp/graph-intelligence", "MASTER_CONTEXT", "tsconfig.json"];
+export const STRONG_MARKERS = [".arsumbris", ".omp/graph-intelligence", "MASTER_CONTEXT"];
 
 // ── THE NAMED REFUSALS ───────────────────────────────────────────────────────
 export const PLUTUS_NO_STORE = "PLUTUS_NO_STORE";
@@ -56,9 +58,9 @@ export interface Store {
 export function resolveRoot(startFile: string): string {
   let dir = dirname(resolve(startFile));
   for (let i = 0; i < 12; i++) {
-    for (const m of ROOT_MARKERS) {
-      if (existsSync(join(dir, m))) return dir;
-    }
+    // FIX (audit store.ts:22): a STRONG marker wins at any depth; a generic one only within 3 levels
+    for (const m of STRONG_MARKERS) if (existsSync(join(dir, m))) return dir;
+    if (i < 3) for (const m of ROOT_MARKERS) if (existsSync(join(dir, m))) return dir;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
@@ -173,6 +175,8 @@ export async function readL2(socketPath: string, timeoutMs = 800): Promise<L2Res
     sock.on("data", (c) => {
       chunks.push(c as Buffer);
       const b = Buffer.concat(chunks);
+      // FIX (audit store.ts:172): a CUMULATIVE cap — a slow-loris cannot force an OOM
+      if (b.length > 32 * 1024 * 1024) { clearTimeout(t); finish({ ok: false, reason: `L2_OVERSIZE: ${b.length} bytes` }); return; }
       if (b.length < 4) return;
       const n = b.readUInt32BE(0);
       // FIX (audit store.ts:165): a bounded frame — a corrupt peer cannot force an OOM
@@ -182,7 +186,11 @@ export async function readL2(socketPath: string, timeoutMs = 800): Promise<L2Res
       try {
         const j = JSON.parse(b.subarray(4, 4 + n).toString("utf8"));
         const g = j?.result?.overview?.graph_shape;
-        finish({ ok: true, nodeCount: g?.node_count, edgeCount: g?.edge_count });
+        // FIX (audit store.ts:182): fail CLOSED — a missing/non-numeric count is NOT a healthy overview
+        const nc = g?.node_count, ec = g?.edge_count;
+        if (!Number.isFinite(nc) || !Number.isFinite(ec)) {
+          finish({ ok: false, reason: `L2_SHAPE_INVALID: node_count=${nc} edge_count=${ec}` });
+        } else finish({ ok: true, nodeCount: nc, edgeCount: ec });
       } catch (e) { finish({ ok: false, reason: `L2_PARSE: ${(e as Error).message}` }); }
     });
     sock.on("error", (e) => { clearTimeout(t); finish({ ok: false, reason: `L2_ERROR: ${e.message}` }); });
