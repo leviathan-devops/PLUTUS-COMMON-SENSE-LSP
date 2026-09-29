@@ -16,6 +16,7 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { connect } from "node:net";
+import { homedir } from "node:os";
 
 // ── THE ROOT MARKERS (the spawn gate 2 — a project root must carry one) ──────
 export const ROOT_MARKERS = [".arsumbris", ".omp/graph-intelligence", "MASTER_CONTEXT", "tsconfig.json"];
@@ -24,6 +25,13 @@ export const ROOT_MARKERS = [".arsumbris", ".omp/graph-intelligence", "MASTER_CO
 export const PLUTUS_NO_STORE = "PLUTUS_NO_STORE";
 export const PLUTUS_NO_ROOT = "PLUTUS_NO_ROOT";
 export const JEVK5_DOWN = "JEVK5_DOWN";
+
+export const TIERS = ["IMMUTABLE", "EVOLVING", "SUPERSEDED"] as const;
+/** FIX (audit store.ts:96): a validated tier — an unknown value falls back to IMMUTABLE. */
+export function validTier(v: unknown): "IMMUTABLE" | "EVOLVING" | "SUPERSEDED" {
+  const t = String(v ?? "").toUpperCase();
+  return (TIERS as readonly string[]).includes(t) ? (t as "IMMUTABLE" | "EVOLVING" | "SUPERSEDED") : "IMMUTABLE";
+}
 
 export interface LawEntity {
   id: string;          // e.g. "law::IRON-01"
@@ -85,7 +93,10 @@ export function loadStore(startFile: string): Store {
   } catch (e) {
     throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unparseable (${(e as Error).message})`);
   }
-  const entities = Array.isArray(doc.entities) ? (doc.entities as Array<Record<string, unknown>>) : [];
+  // FIX (audit store.ts:88): guard every entry's shape — a [null, 42] array must not crash
+  const entities = (Array.isArray(doc.entities) ? doc.entities : []).filter(
+    (e): e is Record<string, unknown> => typeof e === "object" && e !== null,
+  );
   const relationships = Array.isArray(doc.relationships) ? (doc.relationships as Array<Record<string, unknown>>) : [];
   const laws: LawEntity[] = entities
     .filter((e) => String(e.type ?? "") === "law")
@@ -93,7 +104,7 @@ export function loadStore(startFile: string): Store {
       id: String(e.id ?? ""),
       name: String(e.name ?? e.id ?? ""),
       statement: String(e.statement ?? ""),
-      tier: (String(e.tier ?? "IMMUTABLE") as LawEntity["tier"]),
+      tier: validTier(e.tier),
       anchor: String(e.anchor ?? ""),
       source: String(e.source ?? ""),
     }));
@@ -119,9 +130,13 @@ export function lawsFor(store: Store, needle: string): LawEntity[] {
 /** The declarations in a TS-ish file (the L1 detect input). */
 export function declarationsIn(source: string): string[] {
   const out = new Set<string>();
-  const re = /export\s+(?:async\s+)?(?:function|const|class|interface|type|let)\s+([A-Za-z_$][\w$]*)/g;
+  // FIX (audit store.ts:122): cover default/declare/abstract/var/enum + export {a,b}
+  const re = /export\s+(?:default\s+)?(?:async\s+)?(?:declare\s+)?(?:abstract\s+)?(?:function\*?|const|let|var|class|interface|type|enum|namespace)\s+([A-Za-z_$][\w$]*)|export\s*\{([^}]+)\}/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(source)) !== null) out.add(m[1]);
+  while ((m = re.exec(source)) !== null) {
+    if (m[1]) out.add(m[1]);
+    else if (m[2]) for (const part of m[2].split(",")) { const n = part.trim().split(/\s+as\s+/).pop()?.trim(); if (n && /^[A-Za-z_$][\w$]*$/.test(n)) out.add(n); }
+  }
   return [...out];
 }
 
@@ -132,7 +147,10 @@ export interface L2Result { ok: boolean; nodeCount?: number; edgeCount?: number;
 export async function readL2(socketPath: string, timeoutMs = 800): Promise<L2Result> {
   if (!existsSync(socketPath)) return { ok: false, reason: `${PLUTUS_NO_STORE}: socket absent (${socketPath})` };
   return await new Promise<L2Result>((res) => {
-    const sock = connect(socketPath);
+    let sock: ReturnType<typeof connect>;
+    try { sock = connect(socketPath); } catch (e) {
+      return res({ ok: false, reason: `L2_ERROR: ${(e as Error).message}` });   // FIX: a sync throw is NAMED
+    }
     let done = false;
     const finish = (r: L2Result) => { if (!done) { done = true; sock.destroy(); res(r); } };
     const t = setTimeout(() => finish({ ok: false, reason: `L2_TIMEOUT (${timeoutMs}ms)` }), timeoutMs);
@@ -156,6 +174,9 @@ export async function readL2(socketPath: string, timeoutMs = 800): Promise<L2Res
       } catch (e) { finish({ ok: false, reason: `L2_PARSE: ${(e as Error).message}` }); }
     });
     sock.on("error", (e) => { clearTimeout(t); finish({ ok: false, reason: `L2_ERROR: ${e.message}` }); });
+    // FIX (audit store.ts:158): a connect-then-close or a short frame must RESOLVE, not hang
+    sock.on("close", () => { clearTimeout(t); finish({ ok: false, reason: "L2_CLOSED: the peer closed before a full frame" }); });
+    sock.on("end", () => { clearTimeout(t); finish({ ok: false, reason: "L2_ENDED: the peer ended the stream" }); });
   });
 }
 
@@ -164,7 +185,7 @@ export function l2SocketFor(root: string): string {
   const p = resolve(root);
   let h = 0xcbf29ce484222325n;
   for (const b of Buffer.from(p)) { h = ((h ^ BigInt(b)) * 0x100000001b3n) & 0xffffffffffffffffn; }
-  const home = process.env.HOME ?? "/home/leviathan";
+  const home = homedir();   // FIX (audit store.ts:167): portable, no username leak
   return join(home, ".arsumbris", "au-engine", "run", `${h.toString(16).padStart(16, "0")}.sock`);
 }
 
@@ -194,11 +215,13 @@ export function lawsForFile(store: Store, filePath: string, decls: string[]): La
   for (const n of needles) {
     for (const l of store.laws) {
       if (seen.has(l.id)) continue;
+      // FIX (audit store.ts:190): a WORD-BOUNDARY match — 'iron' must not hit 'environment'
       const hay = `${l.name} ${l.statement} ${l.id}`.toLowerCase();
-      if (hay.includes(n)) { seen.add(l.id); out.push(l); }
+      const re = new RegExp(`(^|[^a-z0-9])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
+      if (re.test(hay)) { seen.add(l.id); out.push(l); }
     }
   }
-  return out.slice(0, 12);
+  return out;   // FIX (audit store.ts:190): NO pre-truncation — the ranker decides
 }
 
 /**
@@ -217,5 +240,6 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
     const nums = (hunk.match(/\d+(?:\.\d+)?/g) ?? []).filter((n) => l.statement.includes(n)).length;
     return { l, score: overlap * 2 + nums * 3 };
   });
-  return scored.sort((a, b) => b.score - a.score).slice(0, topK).map((x) => x.l);
+  // FIX (audit store.ts:220): a ZERO-overlap law is not a candidate — return [] (no arbitrary pick)
+  return scored.filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, topK).map((x) => x.l);
 }

@@ -19,8 +19,10 @@ export const PLUTUS_LSP_TOKENS = [
   "plutus/stale",
 ] as const;
 export type PlutusLspToken = (typeof PLUTUS_LSP_TOKENS)[number];
+/** DECLARED, NOT YET EMITTED (audit cards.ts:12): `plutus/callers` awaits the ripwire read (T7). */
 
 export const SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 } as const;
+type Sev = (typeof SEVERITY)[keyof typeof SEVERITY];
 
 export interface FactCard {
   shape: "LAW" | "VIOLATION" | "SUSPECT" | "TIER" | "CALLERS" | "DRIFT" | "STALE";
@@ -46,17 +48,21 @@ export function lawCard(target: string, laws: LawEntity[]): FactCard | null {
 
 export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): FactCard | null {
   const pct = (n?: number) => (typeof n === "number" ? n.toFixed(3) : "n/a");
+  // FIX (audit cards.ts:61): a wrongness verdict with NO laws is a JUDGE artifact, not a law card
+  if (v.kind !== "LAW" && v.kind !== "JUDGE_DOWN" && laws.length === 0) return null;
   if (v.kind === "JUDGE_DOWN") {
     return {
       shape: "STALE",
       title: `the judge is DOWN — the canon could not be consulted`,
       rows: [v.reason ?? "JEVK5_DOWN"],
-      severity: 2,
+      severity: SEVERITY.Warning,
       source: "plutus/stale",
-      total: -1,
+      total: 0,   // FIX (audit cards.ts:108): a count, never a negative sentinel
     };
   }
   if (v.kind === "LAW") return null;                  // the law card already informs
+  // FIX (audit cards.ts:85): an explicit kind check — an unknown kind yields NO card
+  if (v.kind !== "VIOLATION" && v.kind !== "DRIFT" && v.kind !== "SUSPECT") return null;
   const law = laws[0];
   if (v.kind === "VIOLATION") {
     return {
@@ -106,7 +112,7 @@ export function tierCard(laws: LawEntity[]): FactCard | null {
 }
 
 export function staleCard(reason: string): FactCard {
-  return { shape: "STALE", title: `the graph is stale or absent`, rows: [reason], severity: 2, source: "plutus/stale", total: -1 };
+  return { shape: "STALE", title: `the graph is stale or absent`, rows: [reason], severity: SEVERITY.Warning, source: "plutus/stale", total: 0 };
 }
 
 // ── THE LSP MAPPING ──────────────────────────────────────────────────────────
@@ -117,9 +123,11 @@ export interface LspDiagnostic {
   message: string;
 }
 
-export function toDiagnostic(card: FactCard): LspDiagnostic {
+/** FIX (audit cards.ts:120): a real range — the card's anchor line when known, else 0. */
+export function toDiagnostic(card: FactCard, range?: { line: number; character: number }): LspDiagnostic {
+  const line = range?.line ?? 0;
   return {
-    range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+    range: { start: { line, character: range?.character ?? 0 }, end: { line, character: (range?.character ?? 0) + 1 } },
     severity: card.severity,
     source: card.source,
     message: `${card.title}\n${card.rows.join("\n")}`,

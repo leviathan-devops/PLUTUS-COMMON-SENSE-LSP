@@ -12,7 +12,7 @@
  */
 
 import { readFileSync, appendFileSync } from "node:fs";
-import { loadStore, lawsFor, lawsForFile, declarationsIn, PLUTUS_NO_STORE } from "../src/plutus-lsp/store.ts";
+import { loadStore, lawsForFile, declarationsIn } from "../src/plutus-lsp/store.ts";   // FIX (audit:15) dead imports removed
 import { chain, verdict, buildState } from "../src/plutus-lsp/judge.ts";
 import { fileCards, toDiagnostic, PLUTUS_LSP_TOKENS } from "../src/plutus-lsp/cards.ts";
 
@@ -22,7 +22,7 @@ const receipt = (line: string) => { try { appendFileSync(RECEIPT, `${new Date().
 const log = (m: string) => { try { appendFileSync("/tmp/plutus-lsp-stderr.log", `${new Date().toISOString()} ${m}\n`); } catch {} };
 
 // ── THE PIPELINE (one file → the cards) ──────────────────────────────────────
-export interface PipelineResult { tokens: string[]; cards: number; refused: string | null; vector: Record<string, number> }
+export interface PipelineResult { tokens: string[]; cards: import("../src/plutus-lsp/cards.ts").FactCard[]; refused: string | null; vector: Record<string, number> }
 
 export async function pipeline(file: string, source: string, useJudge = true): Promise<PipelineResult> {
   let store;
@@ -31,11 +31,11 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   } catch (e) {
     const msg = (e as Error).message;
     receipt(`REFUSE ${msg.split(":")[0]} file=${file}`);
-    return { tokens: [], cards: 0, refused: msg, vector: {} };
+    return { tokens: [], cards: [], refused: msg, vector: {} };
   }
   const decls = declarationsIn(source);
   const all = lawsForFile(store, file, decls);
-  if (all.length === 0) { receipt(`NO-LAW file=${file} decls=${decls.length}`); return { tokens: [], cards: 0, refused: null, vector: {} }; }
+  if (all.length === 0) { receipt(`NO-LAW file=${file} decls=${decls.length}`); return { tokens: [], cards: [], refused: null, vector: {} }; }
 
   let v = null;
   let vector: Record<string, number> = {};
@@ -48,21 +48,22 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   const cards = fileCards(file, all, v);
   const tokens = [...new Set(cards.map((c) => c.source))];
   receipt(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
-  return { tokens, cards: cards.length, refused: null, vector };
+  return { tokens, cards, refused: null, vector };
 }
 
 // ── THE SELFTEST (the W4 gate) ───────────────────────────────────────────────
 if (process.argv.includes("--selftest")) {
   const i = process.argv.indexOf("--selftest");
   const file = process.argv[i + 1];
-  if (!file) { console.error("usage: --selftest <file>"); process.exit(2); }
+  // FIX (audit:59): the first NON-FLAG arg after --selftest is the file
+  if (!file || file.startsWith("--")) { console.error("usage: --selftest <file>"); process.exit(2); }
   let src = "";
-  try { src = readFileSync(file, "utf8"); } catch { src = ""; }
+  try { src = readFileSync(file, "utf8"); } catch (e) { console.error(`ENOENT: ${file} — ${(e as Error).message}`); process.exit(2); }
   const r = await pipeline(file, src, !process.argv.includes("--no-judge"));
   console.log(JSON.stringify(r, null, 1));
   if (r.refused) { console.error(`REFUSED: ${r.refused}`); process.exit(1); }
   if (r.tokens.length === 0) { console.error("NO TOKENS — the reflex produced no card"); process.exit(1); }
-  console.error(`SELFTEST OK — ${r.cards} card(s), tokens: ${r.tokens.join(", ")}`);
+  console.error(`SELFTEST OK — ${r.cards.length} card(s), tokens: ${r.tokens.join(", ")}`);
   process.exit(0);
 }
 
@@ -77,23 +78,24 @@ if (process.argv.includes("--stdio")) {
     process.stdout.write(`Content-Length: ${Buffer.byteLength(j)}\r\n\r\n${j}`);
   };
 
-  const analyze = async (uri: string) => {
-    const file = uri.replace(/^file:\/\//, "");
-    const src = docs.get(uri) ?? "";
-    const r = await pipeline(file, src, true);
-    const diags = r.refused
-      ? []
-      : (r.tokens.length > 0 ? buildDiags(file, src, r) : []);
-    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: diags } });
+  /** FIX (audit:81): a real file-URL decode (spaces/unicode), not a naive strip. */
+  const fileOf = (uri: string): string => {
+    try { return decodeURIComponent(uri.replace(/^file:\/\/(localhost)?/, "")); }
+    catch { return uri.replace(/^file:\/\//, ""); }
   };
 
-  const buildDiags = (file: string, src: string, r: PipelineResult) => {
-    try {
-      const store = loadStore(file);
-      const all = lawsForFile(store, file, declarationsIn(src));
-      const cards = fileCards(file, all, null);
-      return cards.map(toDiagnostic);
-    } catch { return []; }
+  const analyze = async (uri: string) => {
+    const file = fileOf(uri);
+    const src = docs.get(uri) ?? "";
+    try {   // FIX (audit:80): no unhandled rejection — a failure publishes [] and logs the reason
+      const r = await pipeline(file, src, true);
+      // FIX (audit:90): the VERDICT is threaded — the published diagnostics carry the judged card
+      const diags = r.refused ? [] : r.cards.map((c) => toDiagnostic(c, c.range));
+      send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: diags } });
+    } catch (e) {
+      log(`ANALYZE_FAIL ${file}: ${(e as Error).message}`);
+      send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: [] } });
+    }
   };
 
   process.stdin.on("data", (c: Buffer) => {
@@ -120,10 +122,15 @@ if (process.argv.includes("--stdio")) {
       } else if (msg.method === "exit") {
         process.exit(0);
       } else if (msg.method === "textDocument/didOpen" || msg.method === "textDocument/didChange") {
-        const p = msg.params as { textDocument?: { uri?: string; text?: string } } | undefined;
+        // FIX (audit scripts/plutus-lsp.ts:122 CRITICAL): didChange carries contentChanges[].text,
+        // NOT textDocument.text (which only didOpen has). Applying a full-sync change here.
+        const p = msg.params as {
+          textDocument?: { uri?: string; text?: string };
+          contentChanges?: Array<{ text?: string }>;
+        } | undefined;
         const uri = p?.textDocument?.uri ?? "";
-        const text = p?.textDocument?.text ?? "";
-        if (uri) { docs.set(uri, text); void analyze(uri); }
+        const text = p?.contentChanges?.[0]?.text ?? p?.textDocument?.text ?? docs.get(uri) ?? "";
+        if (uri) { docs.set(uri, text); void analyze(uri).catch((e) => log(`ANALYZE_FAIL ${uri}: ${(e as Error).message}`)); }
       } else if (msg.method === "textDocument/didClose") {
         const p = msg.params as { textDocument?: { uri?: string } } | undefined;
         const uri = p?.textDocument?.uri ?? "";

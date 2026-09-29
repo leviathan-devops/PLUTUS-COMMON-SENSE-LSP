@@ -43,11 +43,12 @@ export async function health(timeoutMs = 1500): Promise<{ ok: boolean; reason?: 
   try {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), timeoutMs);
-    const r = await fetch(jevk5Health(), { signal: ctl.signal });
-    clearTimeout(t);
-    if (!r.ok) return { ok: false, reason: `${JEVK5_DOWN}: health HTTP ${r.status}` };
-    const j = (await r.json()) as { ok?: boolean; model?: string };
-    return j.ok ? { ok: true } : { ok: false, reason: `${JEVK5_DOWN}: health says ${JSON.stringify(j)}` };
+    try {
+      const r = await fetch(jevk5Health(), { signal: ctl.signal });
+      if (!r.ok) return { ok: false, reason: `${JEVK5_DOWN}: health HTTP ${r.status}` };
+      const j = (await r.json()) as { ok?: boolean; model?: string };
+      return j.ok ? { ok: true } : { ok: false, reason: `${JEVK5_DOWN}: health says ${JSON.stringify(j)}` };
+    } finally { clearTimeout(t); }   // FIX (audit judge.ts:42): cleared on EVERY path
   } catch (e) {
     return { ok: false, reason: `${JEVK5_DOWN}: ${(e as Error).message}` };
   }
@@ -76,11 +77,13 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
     });
     clearTimeout(t);
     if (!r.ok) return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: HTTP ${r.status}`, requests: 1 };
-    const j = (await r.json()) as { answers?: Record<string, { noul?: number }>; latency_ms?: number };
+    const j = (await r.json()) as { answers?: Record<string, { noul?: unknown }>; latency_ms?: number } | null;
+    if (j === null || typeof j !== "object") return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: malformed body`, requests: 1 };
     const answers: Partial<Record<NodeId, number>> = {};
     for (const id of nodes) {
-      const v = j.answers?.[id]?.noul;
-      if (typeof v === "number") answers[id] = v;
+      const v = (j?.answers as Record<string, { noul?: unknown }> | undefined)?.[id]?.noul;
+      // FIX (audit judge.ts:79): a finite number in [0,1] only — a corrupt judge cannot force a verdict
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1) answers[id] = v;
     }
     const answered = Object.keys(answers).length;
     if (answered !== nodes.length) {
@@ -94,13 +97,16 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
 
 /** The evidence text — assembled FROM DISK by the caller (never agent prose). */
 export function buildState(target: string, laws: LawEntity[], hunk: string): string {
-  const lawText = laws.slice(0, 6).map((l) => `[${l.tier}] ${l.name}: ${l.statement} (anchor ${l.anchor})`).join("\n");
+  // FIX (audit judge.ts:96): an explicit marker — a silent cut risks a false LAW
+  const kept = laws.slice(0, 6);
+  const lawText = kept.map((l) => `[${l.tier}] ${l.name}: ${l.statement} (anchor ${l.anchor})`).join("\n")
+    + (laws.length > kept.length ? `\n... [${laws.length - kept.length} more laws truncated]` : "");
   return [
     `TARGET FILE: ${target}`,
     `GOVERNING LAWS (${laws.length}):`,
     lawText || "(none)",
     `PROPOSED CHANGE (the diff hunk):`,
-    hunk.slice(0, 1500) || "(none)",
+    (hunk.length > 1500 ? `${hunk.slice(0, 1500)}\n... [hunk truncated at 1500 of ${hunk.length} chars]` : hunk) || "(none)",
   ].join("\n");
 }
 
@@ -115,14 +121,28 @@ export interface Verdict {
   reason?: string;
 }
 
+/**
+ * THE VERDICT — pure code. FIX (audit judge.ts:118): the DECIDING clauses are the WRONGNESS set
+ * {P4 VIOLATE, P5 CONTRACT, P6 ANTIPATTERN} plus P7 DRIFT; the INFORMING clauses are
+ * {P1 SCOPE, P2 LAW, P3 TIER}. The wrongness = min over the deciding clauses (the weakest clause,
+ * never an average). P1/P2 guard: out-of-scope or lawless evidence yields NO wrongness verdict.
+ */
+export const DECIDING: NodeId[] = ["P4", "P5", "P6"];
 export function verdict(v: JudgeVector): Verdict {
   if (!v.ok) return { kind: "JUDGE_DOWN", weakest: null, vector: {}, reason: v.reason };
   const a = v.answers;
-  const p4 = a.P4 ?? 0;
+  // the guards (informing): out of scope, or no governing law → never a wrongness verdict
+  if ((a.P1 ?? 0) >= THROW_T) return { kind: "LAW", weakest: "P1", vector: a };
+  if (a.P2 !== undefined && a.P2 < DEMAND_T) return { kind: "LAW", weakest: "P2", vector: a };
+  // the min over the ANSWERED deciding clauses (an unjudged clause is not a zero)
+  const answered = DECIDING.filter((id) => a[id] !== undefined);
+  const wrong = answered.map((id) => a[id] as number);
+  const minWrong = wrong.length ? Math.min(...wrong) : 0;
+  const weakest = answered[wrong.indexOf(minWrong)] ?? null;
   const p7 = a.P7 ?? 0;
-  if (p4 >= THROW_T) return { kind: "VIOLATION", weakest: "P4", vector: a };
+  if (minWrong >= THROW_T) return { kind: "VIOLATION", weakest, vector: a };
   if (p7 >= THROW_T) return { kind: "DRIFT", weakest: "P7", vector: a };
-  if (p4 >= DEMAND_T) return { kind: "SUSPECT", weakest: "P4", vector: a };
+  if (minWrong >= DEMAND_T) return { kind: "SUSPECT", weakest, vector: a };
   return { kind: "LAW", weakest: null, vector: a };
 }
 
@@ -147,8 +167,17 @@ export const OBSERVABLE: Array<{ match: RegExp; q: string }> = [
 
 /** The best observable question for a set of laws — the FIRST template that matches, else the generic. */
 export function observableQuestion(laws: LawEntity[]): string {
+  // FIX (audit judge.ts:149): score every law x template; the MOST-SPECIFIC match wins
+  // (a template that matches a law whose text is closest to the template's own keywords).
+  let best: { q: string; score: number } | null = null;
   for (const l of laws) {
-    for (const t of OBSERVABLE) if (t.match.test(l.name) || t.match.test(l.statement)) return t.q;
+    const hay = `${l.name} ${l.statement}`;
+    for (const t of OBSERVABLE) {
+      if (t.match.test(hay)) {
+        const score = (t.q.match(/[a-z]{4,}/g) ?? []).filter((w) => hay.toLowerCase().includes(w)).length;
+        if (!best || score > best.score) best = { q: t.q, score };
+      }
+    }
   }
-  return CHAIN.P4.q;   // the generic fallback
+  return best?.q ?? CHAIN.P4.q;   // the generic fallback
 }
