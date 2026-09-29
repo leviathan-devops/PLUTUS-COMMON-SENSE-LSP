@@ -1,0 +1,22 @@
+{
+  "run": "v2 — THE HOST BRIDGE (the live judge)",
+  "container": "pcsl-ct-02", "image": "mimo-ct:master",
+  "dist": "/tmp/plutus-lsp.js", "distSha": "7a3daf3eadd6f673", "distShaMatch": true,
+  "theBridge": "socat TCP-LISTEN:8091,bind=0.0.0.0 -> 127.0.0.1:8090 — the judge reachable at http://172.17.0.1:8091 from inside",
+  "scenarios": [
+    {"name": "S1 · the host bridge", "kind": "POSITIVE", "passToken": "jevk5-4b", "passTokenMatch": true, "failToken": "refused", "failTokenAbsent": true, "toolResultContext": "BRIDGE OK: {\"ok\": true, \"model\": \"jevk5-4b-v0.2-Q8_0\", \"runtime\": \"gguf\"}", "verdict": "PASS"},
+    {"name": "S2 · the live chain (the vector)", "kind": "POSITIVE", "passToken": "SELFTEST OK", "passTokenMatch": true, "failToken": "JUDGE_DOWN", "failTokenAbsent": true, "toolResultContext": "SELFTEST OK — 2 card(s); vector P1=0.287 P2=0.552 P3=0.830 P4=0.867 P7=0.900", "verdict": "PASS"},
+    {"name": "S5 · the in-scope VIOLATION", "kind": "POSITIVE", "passToken": "plutus/violation", "passTokenMatch": true, "failToken": "JUDGE_DOWN", "failTokenAbsent": true, "toolResultContext": "SELFTEST OK — 3 card(s), tokens: plutus/law,plutus/tier,plutus/violation; receipt PUBLISH n=3 … verdict=VIOLATION (P4=0.923)", "verdict": "PASS"},
+    {"name": "S4 · the clean-env refusal", "kind": "NEGATIVE", "passToken": "PLUTUS_NO_STORE", "passTokenMatch": true, "failToken": "SELFTEST OK", "failTokenAbsent": true, "toolResultContext": "PLUTUS_NO_STORE", "verdict": "PASS"},
+    {"name": "A1 · the down judge", "kind": "ADVERSARIAL", "passToken": "JEVK5_DOWN", "passTokenMatch": true, "failToken": "SELFTEST OK", "failTokenAbsent": true, "toolResultContext": "JEVK5_DOWN", "verdict": "PASS"},
+    {"name": "A2 · the malformed frame", "kind": "ADVERSARIAL", "passToken": "serverInfo", "passTokenMatch": true, "failToken": "OOM", "failTokenAbsent": true, "toolResultContext": "ALIVE: True + the subsequent initialize answered", "verdict": "PASS"}
+  ],
+  "defectsFoundAndFixed": [
+    "D1 THE JUDGE BACKEND DOWN: the llama-server on :8008 had died; the judge's /health LIED (it does not check the backend) while /v1/systemone died with RemoteDisconnected. FIX: restarted via the launcher (hub start jevk5). VERIFIED: the 7-node batch answers (749 ms).",
+    "D2 THE P1 OVER-BLOCK: the scope guard blocked the wrongness verdict on a P1<0.5 (a /tmp path) even when P4=0.923. FIX: jurisdiction comes from THE LAWS (P2), not the model's path read; P1 now informs only. VERIFIED: verdict=VIOLATION.",
+    "D3 THE TEST ISOLATION: `bun test` picked up the checkpoint's copied suite. FIX: bunfig.toml pathIgnorePatterns.",
+    "D4 THE ENV RESTORE: restoring `undefined` set the STRING \"undefined\" (an invalid URL). FIX: delete when undefined."
+  ],
+  "overallVerdict": "PASS — 6/6; the LIVE chain proven in a clean container over the host bridge; the VIOLATION card fired with the live judge.",
+  "residual": "None on the chain. The container's own model auth remains absent (the deterministic exec channel carried the scenarios)."
+}
