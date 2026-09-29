@@ -57,12 +57,12 @@ export async function health(timeoutMs = 1500): Promise<{ ok: boolean; reason?: 
  * THE CHAIN — one batched pass over the 7 nouls.
  * The state is the EVIDENCE TEXT assembled by the caller FROM DISK (the anti-gaming core).
  */
-export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], timeoutMs = 6000): Promise<JudgeVector> {
+export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], timeoutMs = 6000, p4Override?: string): Promise<JudgeVector> {
   const h = await health();
   if (!h.ok) return { ok: false, answers: {}, reason: h.reason, requests: 0 };
 
   const questions: Record<string, { type: "noul"; instructions: string }> = {};
-  for (const id of nodes) questions[id] = { type: "noul", instructions: CHAIN[id].q };
+  for (const id of nodes) questions[id] = { type: "noul", instructions: id === "P4" && p4Override ? p4Override : CHAIN[id].q };
 
   try {
     const ctl = new AbortController();
@@ -124,4 +124,31 @@ export function verdict(v: JudgeVector): Verdict {
   if (p7 >= THROW_T) return { kind: "DRIFT", weakest: "P7", vector: a };
   if (p4 >= DEMAND_T) return { kind: "SUSPECT", weakest: "P4", vector: a };
   return { kind: "LAW", weakest: null, vector: a };
+}
+
+/**
+ * THE OBSERVABLE QUESTION TEMPLATES — the calibration's second fix.
+ * MEASURED: the generic "does this contradict the law?" needs the judge to DERIVE the
+ * contradiction (Δ ~0.0 on the corpus). An OBSERVABLE question about the specific value
+ * discriminates (Δ 0.59-0.63). Each law maps to a DIRECT READ of the evidence.
+ */
+export const OBSERVABLE: Array<{ match: RegExp; q: string }> = [
+  { match: /stop-?loss|sl cap|150 ?pip|sl_?cap/i,
+    q: "Does the evidence state a stop-loss value GREATER than 150 pips? (150 is the cap; read the number)" },
+  { match: /one tp|tp1|take-?profit|single tp/i,
+    q: "Does the evidence define MORE THAN ONE take-profit target (a TP1, TP2, or TP3)?" },
+  { match: /pair format|EUR\/USD|slashes/i,
+    q: "Does the evidence use a pair name WITHOUT the slash separator (e.g. EURUSD instead of EUR/USD)?" },
+  { match: /rrr|risk-?reward|category-specific/i,
+    q: "Does the evidence set a FLAT risk-reward ratio (the same value for every category)?" },
+  { match: /zfp|threshold/i,
+    q: "Does the evidence change the ZFP threshold away from 45?" },
+];
+
+/** The best observable question for a set of laws — the FIRST template that matches, else the generic. */
+export function observableQuestion(laws: LawEntity[]): string {
+  for (const l of laws) {
+    for (const t of OBSERVABLE) if (t.match.test(l.name) || t.match.test(l.statement)) return t.q;
+  }
+  return CHAIN.P4.q;   // the generic fallback
 }

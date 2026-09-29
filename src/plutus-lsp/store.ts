@@ -168,13 +168,21 @@ export function l2SocketFor(root: string): string {
   return join(home, ".arsumbris", "au-engine", "run", `${h.toString(16).padStart(16, "0")}.sock`);
 }
 
-/** Split an identifier into lowercase tokens (camelCase + snake_case). */
+/** The generic tokens that must NOT match (the over-match defect, found by the adversarial sweep). */
+export const STOPWORDS = new Set([
+  "file", "files", "the", "and", "for", "with", "from", "this", "that", "type", "types",
+  "name", "names", "value", "values", "data", "code", "test", "tests", "main", "index",
+  "util", "utils", "core", "base", "src", "lib", "spec", "docs", "readme", "package",
+  "const", "export", "function", "class", "interface", "return", "true", "false", "null",
+]);
+
+/** Split an identifier into lowercase tokens (camelCase + snake_case), dropping the generic ones. */
 export function tokensOf(name: string): string[] {
   return name
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .split(/[^A-Za-z0-9]+/)
     .map((t) => t.toLowerCase())
-    .filter((t) => t.length >= 3);
+    .filter((t) => t.length >= 4 && !STOPWORDS.has(t));
 }
 
 /** The laws governing a FILE — the union of matches over the file's tokens + its declarations. */
@@ -191,4 +199,23 @@ export function lawsForFile(store: Store, filePath: string, decls: string[]): La
     }
   }
   return out.slice(0, 12);
+}
+
+/**
+ * THE HUNK-AWARE RANKING — the calibration's fix (measured: one relevant law -> Δ 0.38-0.63;
+ * twelve fuzzy laws -> Δ ~0.0). Rank the candidate laws by their token overlap with the HUNK,
+ * keep the top K. The L1 detect must be PRECISE, not broad.
+ */
+export function lawsForHunk(store: Store, filePath: string, decls: string[], hunk: string, topK = 3): LawEntity[] {
+  const candidates = lawsForFile(store, filePath, decls);
+  if (candidates.length <= topK) return candidates;
+  const ht = new Set(tokensOf(hunk));
+  const scored = candidates.map((l) => {
+    const lt = tokensOf(`${l.name} ${l.statement}`);
+    const overlap = lt.filter((t) => ht.has(t)).length;
+    // also reward an exact numeric mention (a law about 150 pips vs a hunk with 150)
+    const nums = (hunk.match(/\d+(?:\.\d+)?/g) ?? []).filter((n) => l.statement.includes(n)).length;
+    return { l, score: overlap * 2 + nums * 3 };
+  });
+  return scored.sort((a, b) => b.score - a.score).slice(0, topK).map((x) => x.l);
 }
