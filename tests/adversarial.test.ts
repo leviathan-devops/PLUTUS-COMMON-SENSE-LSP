@@ -20,7 +20,8 @@ test("A1_the_absent_graph_names_PLUTUS_NO_STORE", () => {
 
 test("A2_the_down_judge_names_JEVK5_DOWN", async () => {
   const old = process.env.JEVK5_HEALTH; process.env.JEVK5_HEALTH = "http://127.0.0.1:9/health";
-  const h = await health(500); process.env.JEVK5_HEALTH = old;
+  const h = await health(500);
+  if (old === undefined) delete process.env.JEVK5_HEALTH; else process.env.JEVK5_HEALTH = old;   // FIX
   expect(h.ok).toBe(false); expect(h.reason).toContain(JEVK5_DOWN);
   const v = verdict({ ok: false, answers: {}, reason: h.reason, requests: 0 });
   expect(v.kind).toBe("JUDGE_DOWN");  // a DOWN judge is never a fabricated pass

@@ -76,3 +76,24 @@ the server correctly names the refusal (JUDGE_DOWN) instead of fabricating a pas
 auth is ABSENT in the image (the deterministic exec channel carried the scenarios).
 
 **THE VERDICT: PASS (7/7 + the breaker) — the server works CORRECTLY in a CLEAN environment.**
+
+## THE CONTAINER RIG v2 — THE HOST BRIDGE (the LIVE judge, over the network)
+
+**THE BRIDGE:** `socat TCP-LISTEN:8091,bind=0.0.0.0 -> 127.0.0.1:8090` — from inside the
+container the judge is `http://172.17.0.1:8091`. **The v1 "residual" (no judge in the
+container) was WRONG — the bridge existed and was never looked for.**
+
+| the scenario | the kind | the passToken | the verdict |
+|---|---|---|---|
+| S1 the host bridge | POSITIVE | jevk5-4b | **PASS** |
+| S2 the live chain (the vector) | POSITIVE | SELFTEST OK (P4=0.867) | **PASS** |
+| S5 the in-scope VIOLATION | POSITIVE | plutus/violation (P4=0.923) | **PASS** |
+| S4 the clean-env refusal | NEGATIVE | PLUTUS_NO_STORE | **PASS** |
+| A1 the down judge | ADVERSARIAL | JEVK5_DOWN | **PASS** |
+| A2 the malformed frame | ADVERSARIAL | serverInfo + ALIVE | **PASS** |
+
+**THE DEFECTS FOUND AND FIXED (4):** the judge's backend DOWN (the health lied; restarted);
+the P1 over-block (jurisdiction from the LAWS, not the path); the test isolation (the
+checkpoint's copied suite); the env restore ("undefined").
+
+**THE VERDICT: PASS (6/6) — the live reflex chain proven in a CLEAN container.**

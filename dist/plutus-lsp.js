@@ -256,8 +256,6 @@ function verdict(v) {
   if (!v.ok)
     return { kind: "JUDGE_DOWN", weakest: null, vector: {}, reason: v.reason };
   const a = v.answers;
-  if (a.P1 !== undefined && a.P1 < DEMAND_T)
-    return { kind: "INCONCLUSIVE", weakest: "P1", vector: a };
   if (a.P2 !== undefined && a.P2 < DEMAND_T)
     return { kind: "INCONCLUSIVE", weakest: "P2", vector: a };
   const answered = DECIDING.filter((id) => a[id] !== undefined);

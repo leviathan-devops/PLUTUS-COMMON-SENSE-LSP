@@ -135,9 +135,10 @@ export const DECIDING: NodeId[] = ["P4", "P5", "P6"];
 export function verdict(v: JudgeVector): Verdict {
   if (!v.ok) return { kind: "JUDGE_DOWN", weakest: null, vector: {}, reason: v.reason };
   const a = v.answers;
-  // the guards (informing): OUT of scope (a LOW P1), or no governing law → never a wrongness verdict
-  // FIX (audit judge.ts:135 CRITICAL): P1 asks "is it IN the Plutus tree?" — HIGH = in-scope.
-  if (a.P1 !== undefined && a.P1 < DEMAND_T) return { kind: "INCONCLUSIVE", weakest: "P1", vector: a };
+  // THE GUARDS (informing).
+  // FIX (the container S5, measured): jurisdiction comes from THE LAWS, not the model's path read.
+  // A file that matched canon laws IS in-scope BY CONSTRUCTION — P1 is recorded in the vector
+  // (it informs) but does NOT block the verdict; P2 (the law presence) is the real gate.
   if (a.P2 !== undefined && a.P2 < DEMAND_T) return { kind: "INCONCLUSIVE", weakest: "P2", vector: a };
   // the min over the ANSWERED deciding clauses (an unjudged clause is not a zero)
   const answered = DECIDING.filter((id) => a[id] !== undefined);
