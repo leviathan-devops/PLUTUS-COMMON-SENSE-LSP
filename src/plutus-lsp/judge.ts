@@ -66,30 +66,32 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
   for (const id of nodes) questions[id] = { type: "noul", instructions: id === "P4" && p4Override ? p4Override : CHAIN[id].q };
 
   try {
+    if (nodes.length === 0) return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };  // FIX (audit:61) no vacuous ok
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), timeoutMs);
     const started = Date.now();
-    const r = await fetch(jevk5Url(), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ state, questions }),
-      signal: ctl.signal,
-    });
-    clearTimeout(t);
-    if (!r.ok) return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: HTTP ${r.status}`, requests: 1 };
-    const j = (await r.json()) as { answers?: Record<string, { noul?: unknown }>; latency_ms?: number } | null;
-    if (j === null || typeof j !== "object") return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: malformed body`, requests: 1 };
-    const answers: Partial<Record<NodeId, number>> = {};
-    for (const id of nodes) {
-      const v = (j?.answers as Record<string, { noul?: unknown }> | undefined)?.[id]?.noul;
-      // FIX (audit judge.ts:79): a finite number in [0,1] only — a corrupt judge cannot force a verdict
-      if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1) answers[id] = v;
-    }
-    const answered = Object.keys(answers).length;
-    if (answered !== nodes.length) {
-      return { ok: false, answers, reason: `JUDGE_ANSWER_COUNT: ${answered}/${nodes.length}`, requests: 1, latencyMs: j.latency_ms ?? (Date.now() - started) };
-    }
-    return { ok: true, answers, requests: 1, latencyMs: j.latency_ms ?? (Date.now() - started) };
+    try {
+      const r = await fetch(jevk5Url(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ state, questions }),
+        signal: ctl.signal,
+      });
+      if (!r.ok) return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: HTTP ${r.status}`, requests: 1 };
+      const j = (await r.json()) as { answers?: Record<string, { noul?: unknown }>; latency_ms?: number } | null;
+      if (j === null || typeof j !== "object") return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: malformed body`, requests: 1 };
+      const answers: Partial<Record<NodeId, number>> = {};
+      for (const id of nodes) {
+        const v = (j.answers as Record<string, { noul?: unknown }> | undefined)?.[id]?.noul;
+        // FIX (audit judge.ts:79): a finite number in [0,1] only — a corrupt judge cannot force a verdict
+        if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1) answers[id] = v;
+      }
+      const answered = Object.keys(answers).length;
+      if (answered !== nodes.length) {
+        return { ok: false, answers, reason: `JUDGE_ANSWER_COUNT: ${answered}/${nodes.length}`, requests: 1, latencyMs: j.latency_ms ?? (Date.now() - started) };
+      }
+      return { ok: true, answers, requests: 1, latencyMs: j.latency_ms ?? (Date.now() - started) };
+    } finally { clearTimeout(t); }   // FIX (audit judge.ts:72): cleared on EVERY path
   } catch (e) {
     return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: ${(e as Error).message}`, requests: 1 };
   }
@@ -98,7 +100,9 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
 /** The evidence text — assembled FROM DISK by the caller (never agent prose). */
 export function buildState(target: string, laws: LawEntity[], hunk: string): string {
   // FIX (audit judge.ts:96): an explicit marker — a silent cut risks a false LAW
-  const kept = laws.slice(0, 6);
+  // FIX (audit judge.ts:101): IMMUTABLE first — a truncation must not drop the governing law
+  const ordered = [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
+  const kept = ordered.slice(0, 6);
   const lawText = kept.map((l) => `[${l.tier}] ${l.name}: ${l.statement} (anchor ${l.anchor})`).join("\n")
     + (laws.length > kept.length ? `\n... [${laws.length - kept.length} more laws truncated]` : "");
   return [
@@ -115,7 +119,7 @@ export const THROW_T = 0.85;
 export const DEMAND_T = 0.5;
 
 export interface Verdict {
-  kind: "VIOLATION" | "SUSPECT" | "DRIFT" | "LAW" | "JUDGE_DOWN";
+  kind: "VIOLATION" | "SUSPECT" | "DRIFT" | "LAW" | "INCONCLUSIVE" | "JUDGE_DOWN";
   weakest: NodeId | null;
   vector: Partial<Record<NodeId, number>>;
   reason?: string;
@@ -131,13 +135,15 @@ export const DECIDING: NodeId[] = ["P4", "P5", "P6"];
 export function verdict(v: JudgeVector): Verdict {
   if (!v.ok) return { kind: "JUDGE_DOWN", weakest: null, vector: {}, reason: v.reason };
   const a = v.answers;
-  // the guards (informing): out of scope, or no governing law → never a wrongness verdict
-  if ((a.P1 ?? 0) >= THROW_T) return { kind: "LAW", weakest: "P1", vector: a };
-  if (a.P2 !== undefined && a.P2 < DEMAND_T) return { kind: "LAW", weakest: "P2", vector: a };
+  // the guards (informing): OUT of scope (a LOW P1), or no governing law → never a wrongness verdict
+  // FIX (audit judge.ts:135 CRITICAL): P1 asks "is it IN the Plutus tree?" — HIGH = in-scope.
+  if (a.P1 !== undefined && a.P1 < DEMAND_T) return { kind: "INCONCLUSIVE", weakest: "P1", vector: a };
+  if (a.P2 !== undefined && a.P2 < DEMAND_T) return { kind: "INCONCLUSIVE", weakest: "P2", vector: a };
   // the min over the ANSWERED deciding clauses (an unjudged clause is not a zero)
   const answered = DECIDING.filter((id) => a[id] !== undefined);
+  if (answered.length === 0) return { kind: "INCONCLUSIVE", weakest: null, vector: a };  // FIX (audit:136) fail-closed
   const wrong = answered.map((id) => a[id] as number);
-  const minWrong = wrong.length ? Math.min(...wrong) : 0;
+  const minWrong = Math.min(...wrong);
   const weakest = answered[wrong.indexOf(minWrong)] ?? null;
   const p7 = a.P7 ?? 0;
   if (minWrong >= THROW_T) return { kind: "VIOLATION", weakest, vector: a };
@@ -174,7 +180,7 @@ export function observableQuestion(laws: LawEntity[]): string {
     const hay = `${l.name} ${l.statement}`;
     for (const t of OBSERVABLE) {
       if (t.match.test(hay)) {
-        const score = (t.q.match(/[a-z]{4,}/g) ?? []).filter((w) => hay.toLowerCase().includes(w)).length;
+        const score = (t.q.toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((w) => hay.toLowerCase().includes(w)).length;
         if (!best || score > best.score) best = { q: t.q, score };
       }
     }

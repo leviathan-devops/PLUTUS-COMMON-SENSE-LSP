@@ -17,9 +17,12 @@ import { chain, verdict, buildState } from "../src/plutus-lsp/judge.ts";
 import { fileCards, toDiagnostic, PLUTUS_LSP_TOKENS } from "../src/plutus-lsp/cards.ts";
 
 const RECEIPT = process.env.PLUTUS_LSP_RECEIPT ?? "/tmp/plutus-lsp-receipts.log";
-const receipt = (line: string) => { try { appendFileSync(RECEIPT, `${new Date().toISOString()} ${line}\n`); } catch {} };
+const receipt = (line: string) => { try { appendFileSync(RECEIPT, `${new Date().toISOString()} ${clean(line)}\n`); } catch {} };
 
-const log = (m: string) => { try { appendFileSync("/tmp/plutus-lsp-stderr.log", `${new Date().toISOString()} ${m}\n`); } catch {} };
+const LOG = process.env.PLUTUS_LSP_LOG ?? "/tmp/plutus-lsp-stderr.log";
+// FIX (audit:22): strip CR/LF so a crafted URI cannot forge a receipt line
+const clean = (m: string) => m.replace(/[\r\n]+/g, " ");
+const log = (m: string) => { try { appendFileSync(LOG, `${new Date().toISOString()} ${clean(m)}\n`); } catch {} };
 
 // ── THE PIPELINE (one file → the cards) ──────────────────────────────────────
 export interface PipelineResult { tokens: string[]; cards: import("../src/plutus-lsp/cards.ts").FactCard[]; refused: string | null; vector: Record<string, number> }
@@ -59,7 +62,9 @@ if (process.argv.includes("--selftest")) {
   if (!file || file.startsWith("--")) { console.error("usage: --selftest <file>"); process.exit(2); }
   let src = "";
   try { src = readFileSync(file, "utf8"); } catch (e) { console.error(`ENOENT: ${file} — ${(e as Error).message}`); process.exit(2); }
-  const r = await pipeline(file, src, !process.argv.includes("--no-judge"));
+  let r: PipelineResult;
+  try { r = await pipeline(file, src, !process.argv.includes("--no-judge")); }
+  catch (e) { console.error(`PIPELINE_FAIL: ${(e as Error).message}`); process.exit(1); }   // FIX (audit:62)
   console.log(JSON.stringify(r, null, 1));
   if (r.refused) { console.error(`REFUSED: ${r.refused}`); process.exit(1); }
   if (r.tokens.length === 0) { console.error("NO TOKENS — the reflex produced no card"); process.exit(1); }
@@ -84,12 +89,14 @@ if (process.argv.includes("--stdio")) {
     catch { return uri.replace(/^file:\/\//, ""); }
   };
 
+  const seq = new Map<string, number>();   // FIX (audit:133): the per-uri sequence guard
   const analyze = async (uri: string) => {
     const file = fileOf(uri);
     const src = docs.get(uri) ?? "";
+    const my = (seq.get(uri) ?? 0) + 1; seq.set(uri, my);
     try {   // FIX (audit:80): no unhandled rejection — a failure publishes [] and logs the reason
       const r = await pipeline(file, src, true);
-      // FIX (audit:90): the VERDICT is threaded — the published diagnostics carry the judged card
+      if (seq.get(uri) !== my) { log(`STALE_DROP ${file} (seq ${my} < ${seq.get(uri)})`); return; }   // FIX (audit:133)
       const diags = r.refused ? [] : r.cards.map((c) => toDiagnostic(c, c.range));
       send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: diags } });
     } catch (e) {
@@ -106,6 +113,8 @@ if (process.argv.includes("--stdio")) {
       const m = /Content-Length:\s*(\d+)/i.exec(buf.subarray(0, head).toString("ascii"));
       if (!m) { buf = buf.subarray(head + 4); continue; }
       const n = parseInt(m[1], 10);
+      // FIX (audit:106): a malformed header or an unbounded length must not mis-slice / OOM
+      if (!Number.isFinite(n) || n < 0 || n > 32 * 1024 * 1024) { buf = buf.subarray(head + 4); continue; }
       if (buf.length < head + 4 + n) break;
       const body = buf.subarray(head + 4, head + 4 + n).toString("utf8");
       buf = buf.subarray(head + 4 + n);
@@ -129,7 +138,9 @@ if (process.argv.includes("--stdio")) {
           contentChanges?: Array<{ text?: string }>;
         } | undefined;
         const uri = p?.textDocument?.uri ?? "";
-        const text = p?.contentChanges?.[0]?.text ?? p?.textDocument?.text ?? docs.get(uri) ?? "";
+        // FIX (audit scripts:132): the LAST change is authoritative in a batched full-sync
+        const cc = p?.contentChanges ?? [];
+        const text = cc.length > 0 ? (cc[cc.length - 1]?.text ?? docs.get(uri) ?? "") : (p?.textDocument?.text ?? docs.get(uri) ?? "");
         if (uri) { docs.set(uri, text); void analyze(uri).catch((e) => log(`ANALYZE_FAIL ${uri}: ${(e as Error).message}`)); }
       } else if (msg.method === "textDocument/didClose") {
         const p = msg.params as { textDocument?: { uri?: string } } | undefined;

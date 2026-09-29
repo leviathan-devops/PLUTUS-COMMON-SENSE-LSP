@@ -63,7 +63,9 @@ export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): Fact
   if (v.kind === "LAW") return null;                  // the law card already informs
   // FIX (audit cards.ts:85): an explicit kind check — an unknown kind yields NO card
   if (v.kind !== "VIOLATION" && v.kind !== "DRIFT" && v.kind !== "SUSPECT") return null;
-  const law = laws[0];
+  // FIX (audit cards.ts:66): attribute the law the verdict actually evaluated (the weakest clause's law)
+  const law = laws.find((l) => l.tier === "IMMUTABLE") ?? laws[0];
+  if (!law) return null;
   if (v.kind === "VIOLATION") {
     return {
       shape: "VIOLATION",

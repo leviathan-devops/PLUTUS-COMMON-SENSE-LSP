@@ -83,13 +83,23 @@ export function loadStore(startFile: string): Store {
   if (!existsSync(l1Path)) {
     throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} absent (root=${root})`);
   }
-  const st = statSync(l1Path);
-  if (st.size === 0) {
-    throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} is empty (0 bytes)`);
+  // FIX (audit store.ts:83): stat+read in ONE try — any fs error maps to the NAMED refusal
+  let raw = "";
+  try {
+    const st = statSync(l1Path);
+    if (st.size === 0) throw new Error("0 bytes");
+    raw = readFileSync(l1Path, "utf8");
+  } catch (e) {
+    throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${(e as Error).message})`);
   }
   let doc: { entities?: unknown[]; relationships?: unknown[] };
   try {
-    doc = JSON.parse(readFileSync(l1Path, "utf8"));
+    const parsed = JSON.parse(raw) as unknown;
+    // FIX (audit store.ts:90): a non-object doc (null/42/"str"/[]) → the NAMED refusal
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`the doc is ${Array.isArray(parsed) ? "an array" : typeof parsed}, not an object`);
+    }
+    doc = parsed as { entities?: unknown[]; relationships?: unknown[] };
   } catch (e) {
     throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unparseable (${(e as Error).message})`);
   }
@@ -97,7 +107,10 @@ export function loadStore(startFile: string): Store {
   const entities = (Array.isArray(doc.entities) ? doc.entities : []).filter(
     (e): e is Record<string, unknown> => typeof e === "object" && e !== null,
   );
-  const relationships = Array.isArray(doc.relationships) ? (doc.relationships as Array<Record<string, unknown>>) : [];
+  // FIX (audit store.ts:100): the same shape guard as the entities
+  const relationships = (Array.isArray(doc.relationships) ? doc.relationships : []).filter(
+    (r): r is Record<string, unknown> => typeof r === "object" && r !== null,
+  );
   const laws: LawEntity[] = entities
     .filter((e) => String(e.type ?? "") === "law")
     .map((e) => ({
@@ -117,14 +130,11 @@ export function loadStore(startFile: string): Store {
  * A symbol with NO laws returns [] — and the caller emits NO card (the anti-phantom law).
  */
 export function lawsFor(store: Store, needle: string): LawEntity[] {
-  const n = needle.toLowerCase();
+  const n = needle.trim().toLowerCase();
   if (!n) return [];
-  return store.laws.filter(
-    (l) =>
-      l.name.toLowerCase().includes(n) ||
-      l.statement.toLowerCase().includes(n) ||
-      l.id.toLowerCase().includes(n),
-  );
+  // FIX (audit store.ts:122): a word-boundary match + a trimmed needle (no whitespace phantom)
+  const re = new RegExp(`(^|[^a-z0-9])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
+  return store.laws.filter((l) => re.test(`${l.name} ${l.statement} ${l.id}`));
 }
 
 /** The declarations in a TS-ish file (the L1 detect input). */
@@ -165,6 +175,8 @@ export async function readL2(socketPath: string, timeoutMs = 800): Promise<L2Res
       const b = Buffer.concat(chunks);
       if (b.length < 4) return;
       const n = b.readUInt32BE(0);
+      // FIX (audit store.ts:165): a bounded frame — a corrupt peer cannot force an OOM
+      if (n > 16 * 1024 * 1024) { clearTimeout(t); finish({ ok: false, reason: `L2_FRAME_TOO_LARGE: ${n} bytes` }); return; }
       if (b.length < 4 + n) return;
       clearTimeout(t);
       try {
@@ -190,12 +202,12 @@ export function l2SocketFor(root: string): string {
 }
 
 /** The generic tokens that must NOT match (the over-match defect, found by the adversarial sweep). */
-export const STOPWORDS = new Set([
+export const STOPWORDS: ReadonlySet<string> = new Set([
   "file", "files", "the", "and", "for", "with", "from", "this", "that", "type", "types",
   "name", "names", "value", "values", "data", "code", "test", "tests", "main", "index",
   "util", "utils", "core", "base", "src", "lib", "spec", "docs", "readme", "package",
   "const", "export", "function", "class", "interface", "return", "true", "false", "null",
-]);
+]);   // FIX (audit store.ts:193): ReadonlySet — a caller cannot corrupt the global matcher
 
 /** Split an identifier into lowercase tokens (camelCase + snake_case), dropping the generic ones. */
 export function tokensOf(name: string): string[] {
@@ -208,7 +220,8 @@ export function tokensOf(name: string): string[] {
 
 /** The laws governing a FILE — the union of matches over the file's tokens + its declarations. */
 export function lawsForFile(store: Store, filePath: string, decls: string[]): LawEntity[] {
-  const base = (filePath.split("/").pop() ?? "").replace(/\.[a-z]+$/, "");
+  // FIX (audit store.ts:211): a cross-platform base — backslashes + case-insensitive extensions
+  const base = (filePath.split(/[\\/]/).pop() ?? "").replace(/\.[A-Za-z0-9.]+$/, "");
   const needles = new Set<string>([...tokensOf(base), ...decls.flatMap(tokensOf)]);
   const seen = new Set<string>();
   const out: LawEntity[] = [];
