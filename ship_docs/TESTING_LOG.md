@@ -51,3 +51,28 @@ mode; the enforcing layer (v2) is gated behind this. FAIL is never PASS.
 ## THE HONEST RESIDUAL
 The L4 live-TUI proof is pending. The corpus is small. The precision is 0.50 (bounded by the
 polarity law — a Warning, never a block).
+
+## THE CONTAINER RIG (mimo-ct:master · pcsl-ct-01 · the deep-container-testing protocol)
+
+**The plan:** reports/CT_PLAN.txt (4381 chars · 6 sections · 4 scenarios + 2 adversarial · hash 8006d7d5).
+**The deploy:** /tmp/plutus-lsp.js sha256 f8e8349b9fa568a1 == the local dist (THE SHA MATCH).
+**The results artifact:** reports/pcsl-ct-results.json (+ .mimocode/ct-results.json).
+
+| the scenario | the kind | the passToken | the verdict |
+|---|---|---|---|
+| S1 the clean-env named refusal | POSITIVE | PLUTUS_NO_ROOT | **PASS** |
+| S1b the specific PLUTUS_NO_STORE | POSITIVE | PLUTUS_NO_STORE | **PASS** |
+| S2 the fixture graph → the cards | POSITIVE | SELFTEST OK (3 cards) | **PASS** |
+| S3 a fact-free file → NO card | NEGATIVE | NO-LAW | **PASS** |
+| S4 the stdio LSP handshake | NEGATIVE | serverInfo | **PASS** |
+| A1 the down judge → the named refusal | ADVERSARIAL | JUDGE_DOWN | **PASS** |
+| A2 the malformed frame (the bound holds) | ADVERSARIAL | serverInfo + ALIVE | **PASS** |
+
+**THE PHASE-E BREAKER: 10/10** (the sha match · every scenario · every token · no circular ·
+no timeout · the radius · the adversarial · the container alive · the artifact).
+
+**THE HONEST RESIDUAL:** the container has NO JevK5 (:8090) — the live chain cannot run there;
+the server correctly names the refusal (JUDGE_DOWN) instead of fabricating a pass. The model
+auth is ABSENT in the image (the deterministic exec channel carried the scenarios).
+
+**THE VERDICT: PASS (7/7 + the breaker) — the server works CORRECTLY in a CLEAN environment.**
