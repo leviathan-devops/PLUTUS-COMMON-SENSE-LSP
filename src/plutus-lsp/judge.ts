@@ -213,3 +213,121 @@ export function observableQuestion(laws: LawEntity[]): string {
   }
   return best?.q ?? CHAIN.P4.q;   // the generic fallback
 }
+
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * L2 · THE RELEVANCE PASS — THE JEV KERNEL INSIDE THE DETECTION (the fix)
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * THE ARCHITECTURE LAW (jev-decision-gate-firewall): THE LEXICON DETECTS. JEV DECIDES.
+ *
+ * BEFORE (the defect this replaces): relevance was DECIDED LEXICALLY — token overlap
+ * + numeric coincidence in `lawsForHunk`. The judge ran DOWNSTREAM, handed a pre-filtered
+ * top-3, and could only answer "does this change violate a law you were already given?"
+ * It NEVER got to answer the question that matters: WHICH LAWS GOVERN THIS AT ALL.
+ * Measured consequence: a MATHEXPR file received the stop-loss + ZFP laws (the probe's case C).
+ *
+ * AFTER: the detector produces a WIDE candidate net (cheap, zero intelligence, no opinion).
+ * THE JUDGE decides relevance — one batched noul PER CANDIDATE, same state, ONE pass.
+ * Only the laws the judge marks relevant reach the violation pass.
+ */
+
+export interface RelevanceRow { index: number; lawId: string; p: number }
+
+/**
+ * THE RELEVANCE BAR — DERIVED, not assumed (measured 2026-09-30, container, judge live).
+ *
+ * THE MEASURED POSITIVE DISTRIBUTION (a law that DOES govern the file being written):
+ *   SL-CAP=0.345 · IRON-01=0.597 · MATHEXPR-SYNTAX=0.473
+ * THE SWEEP (the five probe files x three bars):
+ *   0.50 → A=0 cards, C=0 cards   (FALSE NEGATIVES — the judge under-reads; coverage lost)
+ *   0.30 → A=3 SL-CAP, B=2 IRON-01, C=2 MATHEXPR, D/E=0   (each file gets ITS OWN law)
+ *   0.20 → identical to 0.30 (no additional rows cross)
+ * ⇒ 0.30 is the LOWEST bar that recovers every measured positive while the neutral and
+ *   unrelated files still emit nothing. Below it nothing changes; above it we lose coverage.
+ *
+ * THE LIMIT (stated, not hidden): this is derived on the POSITIVE side only. In this corpus the
+ * detector produced NO candidates for the neutral/unrelated files, so the judge's NEGATIVE
+ * discrimination is not yet exercised — a mixed-candidate fixture (a file that lexically matches
+ * one law but is actually about another) is the next measurement.
+ */
+export const RELEVANCE_T = bar(process.env.PLUTUS_RELEVANCE_T ?? 0.3);
+
+export async function relevancePass(
+  laws: LawEntity[],
+  filePath: string,
+  hunk: string,
+  timeoutMs = 6000,
+): Promise<{ ok: boolean; scored: RelevanceRow[]; reason?: string; requests: number; latencyMs?: number }> {
+  if (laws.length === 0) return { ok: true, scored: [], requests: 0 };   // the anti-phantom law
+  const h = await health();
+  if (!h.ok) return { ok: false, scored: [], reason: h.reason, requests: 0 };
+
+  // ONE state, ONE noul per candidate — the batched pass.
+  const subject = filePath.split("/").pop() ?? filePath;
+  const lines = laws
+    .map((l, i) => `Candidate ${i + 1} [${l.tier}] ${l.name}: ${l.statement.slice(0, 160)}`)
+    .join("\n");
+  const state = [
+    `FILE BEING WRITTEN: ${subject}`,
+    `DECLARATIONS IN THE HUNK:`,
+    hunk.slice(0, 1200) || "(none)",
+    `CANDIDATE LAWS:`,
+    lines,
+  ].join("\n");
+
+  const questions: Record<string, { type: "noul"; instructions: string }> = {};
+  laws.forEach((_, i) => {
+    questions[`R${i + 1}`] = {
+      type: "noul",
+      instructions:
+        `Candidate ${i + 1}: does THIS law govern the code being written in ${subject}? ` +
+        `A law governs only if the code's subject matter is the same thing the law is about ` +
+        `(the same quantity, rule, or domain). Answer no if the law's subject is unrelated ` +
+        `to what this file's hunk actually touches.`,
+    };
+  });
+
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), timeoutMs);
+    const started = Date.now();
+    try {
+      const r = await fetch(jevk5Url(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ state, questions }),
+        signal: ctl.signal,
+      });
+      if (!r.ok) return { ok: false, scored: [], reason: `${JEVK5_DOWN}: HTTP ${r.status}`, requests: 1 };
+      const j = (await r.json()) as { answers?: Record<string, { noul?: unknown }>; latency_ms?: number } | null;
+      if (!j || typeof j !== "object") return { ok: false, scored: [], reason: `${JEVK5_DOWN}: malformed body`, requests: 1 };
+      const scored: RelevanceRow[] = [];
+      for (const l of laws) {
+        const key = `R${laws.indexOf(l) + 1}`;
+        const v = (j.answers as Record<string, { noul?: unknown }> | undefined)?.[key]?.noul;
+        // an unreadable answer is UNKNOWN, never a silent 0 (the engine's law)
+        scored.push({ index: laws.indexOf(l), lawId: l.id, p: typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? v : -1 });
+      }
+      return { ok: true, scored, requests: 1, latencyMs: j.latency_ms ?? Date.now() - started };
+    } finally { clearTimeout(t); }
+  } catch (e) {
+    return { ok: false, scored: [], reason: `${JEVK5_DOWN}: ${e instanceof Error ? e.message : String(e)}`, requests: 1 };
+  }
+}
+
+/** Split the candidates into (relevant, irrelevant) at the bar. An UNKNOWN (-1) is never shown. */
+export function partitionByRelevance(
+  laws: LawEntity[],
+  rows: RelevanceRow[],
+): { relevant: LawEntity[]; rejected: Array<{ law: LawEntity; p: number }> } {
+  const relevant: LawEntity[] = [];
+  const rejected: Array<{ law: LawEntity; p: number }> = [];
+  laws.forEach((l, i) => {
+    const row = rows.find((r) => r.index === i);
+    const p = row ? row.p : -1;
+    if (p >= RELEVANCE_T) relevant.push(l); else rejected.push({ law: l, p });
+  });
+  return { relevant, rejected };
+}

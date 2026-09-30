@@ -13,7 +13,7 @@
 
 import { readFileSync, appendFileSync } from "node:fs";
 import { loadStore, lawsForHunk, declarationsIn, callersOf, readL2, l2SocketFor } from "../src/plutus-lsp/store.ts";
-import { chain, verdict, buildState, observableQuestion } from "../src/plutus-lsp/judge.ts";
+import { chain, verdict, buildState, observableQuestion, relevancePass, partitionByRelevance, RELEVANCE_T } from "../src/plutus-lsp/judge.ts";
 import { fileCards, toDiagnostic, staleCard, PLUTUS_LSP_TOKENS } from "../src/plutus-lsp/cards.ts";
 
 // FIX F4 (audit-alpha): the receipt MUST be durable — /tmp is ephemeral and the spawn
@@ -28,7 +28,7 @@ const clean = (m: string) => m.replace(/[\r\n]+/g, " ");
 const log = (m: string) => { try { appendFileSync(LOG, `${new Date().toISOString()} ${clean(m)}\n`); } catch {} };
 
 // ── THE PIPELINE (one file → the cards) ──────────────────────────────────────
-export interface PipelineResult { tokens: string[]; cards: import("../src/plutus-lsp/cards.ts").FactCard[]; refused: string | null; vector: Record<string, number> }
+export interface PipelineResult { tokens: string[]; cards: import("../src/plutus-lsp/cards.ts").FactCard[]; refused: string | null; vector: Record<string, number>; relevance?: Array<{ lawId: string; p: number }> }
 
 export async function pipeline(file: string, source: string, useJudge = true): Promise<PipelineResult> {
   let store;
@@ -47,17 +47,42 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   // FIX F1+F2 (audit-bravo): the PRODUCTION pipeline is now EXACTLY the CALIBRATED pipeline —
   // lawsForHunk (ranked top-3) + observableQuestion + ALL 7 nodes. The calibration's numbers
   // now describe the thing that ships.
-  const all = lawsForHunk(store, file, decls, hunk, 3);
+  // L1 · THE DETECTOR — a WIDE candidate net, NO relevance opinion (zero intelligence, free)
+  const candidates = lawsForHunk(store, file, decls, hunk, 12);
   // FIX F3 (audit-bravo: readL2 was dead): a lightweight L2 probe — the typed graph's liveness
   // is recorded in the receipt (never blocking; L1 is the primary read).
   try {
     const l2 = await readL2(l2SocketFor(store.root), 400);
     receipt(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`);
   } catch { /* the L1 read stands alone */ }
-  if (all.length === 0) { receipt(`NO-LAW file=${file} decls=${decls.length}`); return { tokens: [], cards: [], refused: null, vector: {} }; }
+  if (candidates.length === 0) { receipt(`NO-LAW file=${file} decls=${decls.length}`); return { tokens: [], cards: [], refused: null, vector: {} }; }
 
   let v = null;
   let vector: Record<string, number> = {};
+
+  // L2 · THE RELEVANCE PASS — THE JEV KERNEL DECIDES WHAT GOVERNS (before any violation talk)
+  let all = candidates;
+  let relevance: Array<{ lawId: string; p: number }> = [];
+  if (useJudge && candidates.length > 0) {
+    const rel = await relevancePass(candidates, file, hunk);
+    if (rel.ok) {
+      const part = partitionByRelevance(candidates, rel.scored);
+      all = part.relevant;
+      relevance = rel.scored.map((r) => ({ lawId: r.lawId, p: r.p }));
+      receipt(`RELEVANCE ok=${rel.scored.filter((r) => r.p >= RELEVANCE_T).length}/${rel.scored.length} ` +
+        `${part.rejected.map((x) => `${x.law.name}@${x.p.toFixed(2)}`).join(",") || "(none rejected)"}`);
+      // the judge's verdict IS the filter: if NOTHING is relevant, emit nothing (no noise)
+      if (all.length === 0) { receipt("RELEVANCE none — no card emitted"); return { tokens: [], cards: [], refused: null, vector: {}, relevance }; }
+    } else {
+      // fail-CLOSED on noise, fail-OPEN on coverage: if the judge is down we do NOT spray the
+      // unfiltered net — we keep the lexical top-3 and MARK the degraded mode.
+      all = candidates.slice(0, 3);
+      receipt(`RELEVANCE degraded=${rel.reason}`);
+    }
+  } else if (candidates.length > 0) {
+    all = candidates.slice(0, 3);   // the --no-judge path (the unit tests): lexical only
+  }
+
   if (useJudge) {
     // FIX F1: ALL 7 nodes — the DECIDING set [P4,P5,P6] is now actually answered.
     // FIX F2: the observable question (the calibration's configuration).
@@ -68,7 +93,7 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   const cards = fileCards(file, all, v, callersOf(store, file));   // FIX F4: the callers read
   const tokens = [...new Set(cards.map((c) => c.source))];
   receipt(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
-  return { tokens, cards, refused: null, vector };
+  return { tokens, cards, refused: null, vector, relevance };
 }
 
 // ── THE SELFTEST (the W4 gate) ───────────────────────────────────────────────

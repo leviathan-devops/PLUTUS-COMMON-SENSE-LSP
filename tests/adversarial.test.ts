@@ -107,3 +107,39 @@ test("A11_the_bars_are_validated (F10 — an env override cannot fail open)", ()
   expect(Number.isFinite(THROW_T)).toBe(true);
   expect(Number.isFinite(DEMAND_T)).toBe(true);
 });
+
+/**
+ * THE RELEVANCE KERNEL — the audit pinned it so it cannot silently revert to lexical-only.
+ */
+test("A12_the_relevance_kernel_is_wired (not lexical-only)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  const judge = fs.readFileSync(`${import.meta.dir}/../src/plutus-lsp/judge.ts`, "utf8");
+  // the detector gets a WIDE net; the judge decides
+  expect(server).toContain("relevancePass(");
+  expect(server).toContain("partitionByRelevance(");
+  expect(server).toContain("lawsForHunk(store, file, decls, hunk, 12)");   // the wide net
+  expect(judge).toContain("export async function relevancePass");
+  // the bar is DERIVED (documented), not a bare literal
+  expect(judge).toContain("PLUTUS_RELEVANCE_T ?? 0.3");
+});
+
+test("A13_the_relevance_bar_is_derived (0.30, not the assumed 0.50)", async () => {
+  const { RELEVANCE_T } = await import("../src/plutus-lsp/judge.ts");
+  expect(RELEVANCE_T).toBe(0.3);      // the swept bar
+  expect(RELEVANCE_T).not.toBe(0.5);  // the assumed bar that lost coverage
+});
+
+test("A14_relevance_partitions_on_the_bar", async () => {
+  const { partitionByRelevance } = await import("../src/plutus-lsp/judge.ts");
+  const laws = [
+    { id: "law::A", name: "A", statement: "s", tier: "IMMUTABLE" as const, anchor: "x:1", source: "s" },
+    { id: "law::B", name: "B", statement: "s", tier: "IMMUTABLE" as const, anchor: "x:2", source: "s" },
+  ];
+  const part = partitionByRelevance(laws, [{ index: 0, lawId: "law::A", p: 0.8 }, { index: 1, lawId: "law::B", p: 0.2 }]);
+  expect(part.relevant.map((l) => l.id)).toEqual(["law::A"]);
+  expect(part.rejected.map((r) => r.law.id)).toEqual(["law::B"]);
+  // an UNREADABLE answer (-1) is never shown
+  const unknown = partitionByRelevance(laws, [{ index: 0, lawId: "law::A", p: -1 }, { index: 1, lawId: "law::B", p: -1 }]);
+  expect(unknown.relevant.length).toBe(0);
+});

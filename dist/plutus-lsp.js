@@ -430,6 +430,74 @@ function observableQuestion(laws) {
   }
   return best?.q ?? CHAIN.P4.q;
 }
+var RELEVANCE_T = bar(process.env.PLUTUS_RELEVANCE_T ?? 0.3);
+async function relevancePass(laws, filePath, hunk, timeoutMs = 6000) {
+  if (laws.length === 0)
+    return { ok: true, scored: [], requests: 0 };
+  const h = await health();
+  if (!h.ok)
+    return { ok: false, scored: [], reason: h.reason, requests: 0 };
+  const subject = filePath.split("/").pop() ?? filePath;
+  const lines = laws.map((l, i) => `Candidate ${i + 1} [${l.tier}] ${l.name}: ${l.statement.slice(0, 160)}`).join(`
+`);
+  const state = [
+    `FILE BEING WRITTEN: ${subject}`,
+    `DECLARATIONS IN THE HUNK:`,
+    hunk.slice(0, 1200) || "(none)",
+    `CANDIDATE LAWS:`,
+    lines
+  ].join(`
+`);
+  const questions = {};
+  laws.forEach((_, i) => {
+    questions[`R${i + 1}`] = {
+      type: "noul",
+      instructions: `Candidate ${i + 1}: does THIS law govern the code being written in ${subject}? ` + `A law governs only if the code's subject matter is the same thing the law is about ` + `(the same quantity, rule, or domain). Answer no if the law's subject is unrelated ` + `to what this file's hunk actually touches.`
+    };
+  });
+  try {
+    const ctl = new AbortController;
+    const t = setTimeout(() => ctl.abort(), timeoutMs);
+    const started = Date.now();
+    try {
+      const r = await fetch(jevk5Url(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ state, questions }),
+        signal: ctl.signal
+      });
+      if (!r.ok)
+        return { ok: false, scored: [], reason: `${JEVK5_DOWN}: HTTP ${r.status}`, requests: 1 };
+      const j = await r.json();
+      if (!j || typeof j !== "object")
+        return { ok: false, scored: [], reason: `${JEVK5_DOWN}: malformed body`, requests: 1 };
+      const scored = [];
+      for (const l of laws) {
+        const key = `R${laws.indexOf(l) + 1}`;
+        const v = j.answers?.[key]?.noul;
+        scored.push({ index: laws.indexOf(l), lawId: l.id, p: typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? v : -1 });
+      }
+      return { ok: true, scored, requests: 1, latencyMs: j.latency_ms ?? Date.now() - started };
+    } finally {
+      clearTimeout(t);
+    }
+  } catch (e) {
+    return { ok: false, scored: [], reason: `${JEVK5_DOWN}: ${e instanceof Error ? e.message : String(e)}`, requests: 1 };
+  }
+}
+function partitionByRelevance(laws, rows) {
+  const relevant = [];
+  const rejected = [];
+  laws.forEach((l, i) => {
+    const row = rows.find((r) => r.index === i);
+    const p = row ? row.p : -1;
+    if (p >= RELEVANCE_T)
+      relevant.push(l);
+    else
+      rejected.push({ law: l, p });
+  });
+  return { relevant, rejected };
+}
 
 // src/plutus-lsp/cards.ts
 var PLUTUS_LSP_TOKENS = [
@@ -612,17 +680,37 @@ async function pipeline(file, source, useJudge = true) {
   }
   const decls = declarationsIn(source);
   const hunk = source.slice(0, 1200);
-  const all = lawsForHunk(store, file, decls, hunk, 3);
+  const candidates = lawsForHunk(store, file, decls, hunk, 12);
   try {
     const l2 = await readL2(l2SocketFor(store.root), 400);
     receipt(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`);
   } catch {}
-  if (all.length === 0) {
+  if (candidates.length === 0) {
     receipt(`NO-LAW file=${file} decls=${decls.length}`);
     return { tokens: [], cards: [], refused: null, vector: {} };
   }
   let v = null;
   let vector = {};
+  let all = candidates;
+  let relevance = [];
+  if (useJudge && candidates.length > 0) {
+    const rel = await relevancePass(candidates, file, hunk);
+    if (rel.ok) {
+      const part = partitionByRelevance(candidates, rel.scored);
+      all = part.relevant;
+      relevance = rel.scored.map((r) => ({ lawId: r.lawId, p: r.p }));
+      receipt(`RELEVANCE ok=${rel.scored.filter((r) => r.p >= RELEVANCE_T).length}/${rel.scored.length} ` + `${part.rejected.map((x) => `${x.law.name}@${x.p.toFixed(2)}`).join(",") || "(none rejected)"}`);
+      if (all.length === 0) {
+        receipt("RELEVANCE none \u2014 no card emitted");
+        return { tokens: [], cards: [], refused: null, vector: {}, relevance };
+      }
+    } else {
+      all = candidates.slice(0, 3);
+      receipt(`RELEVANCE degraded=${rel.reason}`);
+    }
+  } else if (candidates.length > 0) {
+    all = candidates.slice(0, 3);
+  }
   if (useJudge) {
     const res = await chain(buildState(file, all, hunk), ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], 6000, observableQuestion(all));
     v = verdict(res);
@@ -631,7 +719,7 @@ async function pipeline(file, source, useJudge = true) {
   const cards = fileCards(file, all, v, callersOf(store, file));
   const tokens = [...new Set(cards.map((c) => c.source))];
   receipt(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
-  return { tokens, cards, refused: null, vector };
+  return { tokens, cards, refused: null, vector, relevance };
 }
 if (process.argv.includes("--selftest")) {
   const i = process.argv.indexOf("--selftest");
