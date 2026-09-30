@@ -65,7 +65,8 @@ test("test_lsp_selftest_emits_token", async () => {
     `${root}/.omp/graph-intelligence/layers/semantica/kg.json`,
     JSON.stringify({ entities: [{ id: "law::SL-CAP", name: "SL-CAP", type: "law", statement: "SL ceiling = 36 pips HARD (D17)", tier: "IMMUTABLE", anchor: "engine3:307" }], relationships: [] }),
   );
-  writeFileSync(`${root}/probe.ts`, "export const STOP_LOSS = 200;\n");
+  // the probe MUST share a token with the law for the lexical detector to reach it
+  writeFileSync(`${root}/probe.ts`, "export const SL_CEILING_PIPS = 36;\n");
   const r = spawnSync("bun", [`${import.meta.dir}/../scripts/plutus-lsp.ts`, "--selftest", `${root}/probe.ts`, "--no-judge"], {
     env: { ...process.env, PLUTUS_L1_PATH: `${root}/.omp/graph-intelligence/layers/semantica/kg.json` },
     encoding: "utf8",
