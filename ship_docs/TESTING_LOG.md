@@ -120,3 +120,23 @@ round-11 **BLOCKED** (provider unreachable: `127.0.0.1:4097` refused — the go-
 is down; the JEVK5 judge at :8090 is UP). **BLOCKED is reported as BLOCKED — never as PASS.**
 All 21 round-9/10 blocking findings were fixed first (BUILD_REPORT §7); the gate simply could
 not re-run. The 7 remaining round-10 medium/low notes are recorded in BUILD_REPORT §7's residual.
+
+## THE PRESSURE TEST (2026-09-30 · container pbk/omp-ct:master · v0.6 bundle 51f95e841cf6247f)
+
+**THE RIG:** image `omp-ct:master`, container `pbk`. Bundle deployed file-to-file with sha trio
+match (local == container == `51f95e841cf6247f`). Judge bridge `172.17.0.1:8090` → JevK5
+`jevk5-4b-v0.2-Q8_0` (health `ok:true`). Results artifact: `.omp/container-test-results.json`.
+
+| the scenario | the passToken (in tool result) | the failToken (absent) | the verdict |
+|---|---|---|---|
+| S1 absent graph | PLUTUS_NO_STORE/PLUTUS_NO_ROOT ×4, SELFTEST OK ×0 | SELFTEST OK | **PASS** |
+| S2 dupe nodes | fully answered, 1 answer, no reason | JUDGE_ANSWER_COUNT | **PASS** |
+| S3 no-clear | keeping last-good, zero `diagnostics:[]` sends | `"diagnostics":[]` | **PASS** |
+| S4 Infinity | `relevance unread`, /Infinity/ false | `Infinity` | **PASS** |
+| S5 target warning | `YOU ARE EDITING: src/plutus-lsp/cards.ts` | the canon anchor | **PASS** |
+| A1 malformed frame | serverInfo (259-byte response after 99999999 header) | OOM/hang | **PASS** |
+| A2 down judge | `JEVK5_DOWN: Unable to connect` | fabricated verdict | **PASS** |
+
+**THE PHASE-E BREAKER: 10/10** (sha match · bridge probe · 7/7 scenarios · tokens · no circular ·
+no timeouts · blast radius · adversarial · alive · artifact).
+**THE VERDICT: PASS (7/7) — every recorded derailment (F-01..F-05 classes) is mechanically closed.**
