@@ -38,3 +38,14 @@
 ## 2026-09-29 · P5 (the adversarial sweep)
 - A3 FAILED: the matcher over-matched on 'file' (5 laws). FIX: +STOPWORDS. A3 re-run → PASS.
 - The sweep: 8 angles, all PASS. The battery: 17 pass / 0 fail.
+
+## 2026-09-30 · the round-9/10 fix batch (commit 816b384 — the current HEAD)
+- The trigger: round-9 FAIL (0 critical, 12 high, 31 findings) + round-10 FAIL (2 critical, 10 high, 30 findings). 21 findings closed.
+- The criticals: `knownAbs` undefined → `resolve()`; `MAX_STDIN` undeclared → declared. Both ReferenceErrors the suite never ran.
+- The highs: validTier fail-closed (SUPERSEDED -2) · L2 contiguous framing · chain dedupe-consistent + on jevk5Fetch · visible cap (judged/total/dropped) · outer catch never-clears · send single-resolver · lawCard finite-guards · epsilon attribution · target-file warning · STALE codes · fileOf decode-last · L2 fire-and-forget · health array rejection · single threshold source.
+- THE BATTERY: 26 pass / 0 fail / 117 expects. THE SELFTESTS ×4 (live JevK5 jevk5-4b-v0.2-Q8_0): store 11 cards · judge 13 · script 12 · cards 13 (1 VIOLATION MECH-TOKEN-08 P6=0.868, YOU ARE EDITING names the target).
+- THE BUNDLE: dist/plutus-lsp.js 41,046 bytes · sha256 51f95e841cf6247f… (rebuilt + committed).
+- THE GATE: round-11 BLOCKED (provider :4097 refused; judge :8090 UP). BLOCKED-as-BLOCKED.
+
+## 2026-09-30 · the ship-docs pass (6 docs)
+- BUILD_REPORT §7 · DEBUG_LOG BUG-06..11 · TESTING_LOG round-10/11 section · FAILURE_LOG F-04/F-05 · THEATRICALITY_LOG created (T-01..T-05, operator-caught 0). Committed with the batch.

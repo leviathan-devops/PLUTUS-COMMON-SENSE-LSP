@@ -8,12 +8,14 @@ You are resuming PLUTUS-COMMON-SENSE-LSP. Read, in order:
 5. `packages/plutus-common-sense-lsp/` — the DPL1 + the wave-plan.
 
 ## THE STATE IN ONE LINE
-The server is BUILT + REGISTERED + TESTED (17 pass); the calibration bar is DERIVED (0.30);
-the live-TUI render proof + the checkpoint seal are the remaining gates.
+The server is BUILT + REGISTERED + TESTED (26 pass, 4 live selftests, bundle 51f95e841cf6247f);
+the calibration bar is DERIVED (0.30); the round-11 audit re-run + the live-TUI render proof +
+the checkpoint seal are the remaining gates.
 
 ## THE LAWS THAT SURVIVE
 The polarity (INFORMS) · the state from disk · the bar DERIVED · the observable question ·
-the anti-phantom card · the named refusals (PLUTUS_NO_STORE / JEVK5_DOWN / PLUTUS_NO_ROOT).
+the anti-phantom card · the named refusals (PLUTUS_NO_STORE / JEVK5_DOWN / PLUTUS_NO_ROOT) ·
+the single fallback policy (never clear) · fail-closed defaults · BLOCKED-is-not-a-verdict.
 
 ## THE TRAPS
 The LSP binds at session construction (a restart is needed for a new server).

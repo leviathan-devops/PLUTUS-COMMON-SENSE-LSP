@@ -34,3 +34,12 @@
 - THE ROOT CAUSE: I wrote 3 files without a ripwire/graph query (the pin's law).
 - THE FIX: the symlink anchor (.pcsl-anchor) + ripwire map (the cwd-confinement remedy).
 - THE LESSON: the gate is right — a structural edit without a query is a blind edit.
+
+## BUG-06..11 · the round-10 batch (found by the round-9/10 audits, 2026-09-30)
+- BUG-06: knownAbs + MAX_STDIN ReferenceErrors — helpers never defined; the suite never ran those branches. FIX: resolve() + declaration. LESSON: the audit covers the branches the suite skips.
+- BUG-07: validTier fail-open (unknown → IMMUTABLE +2). FIX: SUPERSEDED -2. LESSON: unknown must sink.
+- BUG-08: chain raw-vs-deduped count (false JUDGE_ANSWER_COUNT) + inline reimplementation drift. FIX: validated set + reuse jevk5Fetch. LESSON: a helper prevents drift only if used.
+- BUG-09: outer catch published [] (wiped last-good). FIX: send nothing. LESSON: one fallback policy, stated once.
+- BUG-10: send() leaked drain/error listeners per frame. FIX: callback-only resolver. LESSON: one resolver per promise.
+- BUG-11: YOU ARE EDITING named the canon file. FIX: targetFile threaded; live proof on cards.ts. LESSON: a warning naming the wrong file trains ignore.
+- THE VERIFICATION: 26/0 battery + 4 live selftests + rebuilt bundle (51f95e841cf6247f).

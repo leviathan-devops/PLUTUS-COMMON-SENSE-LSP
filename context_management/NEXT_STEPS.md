@@ -1,5 +1,9 @@
 # NEXT_STEPS — the queued work
 
+## P0 · THE ROUND-11 AUDIT RE-RUN (the open gate)
+The lane (`127.0.0.1:4097`) is down; the 21 round-9/10 fixes are landed + locally verified
+(26/0 battery, 4 live selftests, rebuilt bundle). Re-run the scan when the lane recovers.
+
 ## P1 · THE LIVE-TUI RENDER PROOF (the remaining gate)
 The LSP binds at SESSION CONSTRUCTION — a running session does not pick up a new server.
 The proof: restart the TUI, open a Plutus file, read `/tmp/plutus-lsp-receipts.log` for
@@ -16,5 +20,6 @@ trusted (the informing layer must be quiet before the enforcing layer arms).
 ## P2 · THE OBSERVABLE QUESTION LIBRARY
 The OBSERVABLE table has 5 templates; the canon has 564 laws. Grow the library per law family.
 
-## P3 · THE L2 SOCKET READ IN THE PIPELINE
-store.ts has readL2; the pipeline uses L1 only today. Wire the L2 read for the typed counts.
+## P3 · THE L2 SOCKET READ IN THE PIPELINE — DONE (2026-09-30)
+The probe is fire-and-forget (`void readL2(...).then(receipt)`) — the receipt carries the typed
+counts without blocking the keystroke path.

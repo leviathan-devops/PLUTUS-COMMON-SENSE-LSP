@@ -23,6 +23,15 @@
 | A8 the token set = 7 unique | — | PASS |
 `bun test tests/adversarial.test.ts` → 8 pass.
 
+## THE ROUND-10 FIX BATCH (commit 816b384)
+| the evidence | the artifact |
+|---|---|
+| the battery 26/0/117 | `bun test tests/` (3 files) |
+| the live selftests ×4 | store 11 · judge 13 · script 12 · cards 13 (VIOLATION MECH-TOKEN-08 P6=0.868) |
+| the bundle sha | `dist/plutus-lsp.js` 51f95e841cf6247f |
+| the receipt | `forensic/lsp-receipts.log` → `RELEVANCE judged=12/12 dropped=0` (2026-09-30T17:46:57Z) |
+| the audit gate | round-11 BLOCKED (:4097 refused) — 21 round-9/10 findings fixed first |
+
 ## THE RAW RECEIPT (verbatim)
 ```
 INIT pid=1466672

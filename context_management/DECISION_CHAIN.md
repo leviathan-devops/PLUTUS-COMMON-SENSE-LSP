@@ -20,3 +20,19 @@ cost is BOUNDED by the polarity law (a Warning, never a block). Evidence: report
 
 ## D-06 · THE STOPWORDS (found by the adversarial sweep)
 Generic tokens ('file') over-match. Evidence: the A3 failure → +STOPWORDS → the pass.
+
+## D-07 · THE SINGLE FALLBACK POLICY (found by round-10)
+A transient failure sends NOTHING (the client keeps last-good); publishing [] is a second policy
+and it contradicts the first. Evidence: the outer-catch fix + the double-fault path (one policy).
+
+## D-08 · FAIL-CLOSED DEFAULTS (found by round-10)
+An unknown tier sinks (SUPERSEDED -2), never floats (IMMUTABLE +2). An unanswered clause is
+UNKNOWN, never 0. Evidence: validTier + verdict() guards.
+
+## D-09 · THE WARNING NAMES THE TARGET (found by round-10)
+A warning derived from the law's anchor names the canon file, not the file being edited — worse
+than silence. Evidence: targetFile threading, live proof `YOU ARE EDITING: src/plutus-lsp/cards.ts`.
+
+## D-10 · BLOCKED IS NOT A VERDICT (found by round-11)
+A gate that cannot run has said nothing. "No new findings" from a dead lane is not "clean".
+Evidence: round-11 BLOCKED (:4097 refused) with 21 fixes already landed and verified locally.
