@@ -115,8 +115,19 @@ export function buildState(target: string, laws: LawEntity[], hunk: string): str
 }
 
 /** The verdict — PURE CODE (the model answers numbers; the code decides). */
-export const THROW_T = 0.85;
-export const DEMAND_T = 0.5;
+/**
+ * THE THRESHOLDS.
+ * FIX A (the audit: the calibration's derived bar had ZERO production consumers):
+ * DEMAND_T is the DERIVED operating point from reports/CALIBRATION_v1.md —
+ * bar 0.30 (F1 0.60 · precision 0.50 · recall 0.75) on the 8-item corpus
+ * (tests/calibration/corpus.json, 4 violations + 4 cleans). Reproduce:
+ *   bun tests/calibration/calibrate.ts
+ * THROW_T stays a POLICY bar (a high bar for an Error-severity verdict; the
+ * calibration's top score was 0.61 — an Error at 0.30 would fire on half the
+ * cleans). Env-overridable so a re-calibration can retune without a rebuild.
+ */
+export const THROW_T = Number(process.env.PLUTUS_THROW_T ?? 0.85);   // the VIOLATION bar (policy)
+export const DEMAND_T = Number(process.env.PLUTUS_DEMAND_T ?? 0.30); // the SUSPECT bar (DERIVED)
 
 export interface Verdict {
   kind: "VIOLATION" | "SUSPECT" | "DRIFT" | "LAW" | "INCONCLUSIVE" | "JUDGE_DOWN";
@@ -146,13 +157,15 @@ export function verdict(v: JudgeVector): Verdict {
   const wrong = answered.map((id) => a[id] as number);
   const minWrong = Math.min(...wrong);
   const weakest = answered[wrong.indexOf(minWrong)] ?? null;
-  const p7 = a.P7 ?? 0;
-  // FIX (audit judge.ts:134): P3 TIER wired — an IMMUTABLE-governed file gets the STRICTER bar
-  const immutable = (a.P3 ?? 0) >= DEMAND_T;
-  const throwBar = immutable ? THROW_T * 0.9 : THROW_T;   // a canon law tolerates less
-  // THE PRIORITY (documented): a wrongness verdict outranks drift; both are reported in the vector
+  // FIX B (the audit: the SILENT DEFAULTS were fail-open). An UNANSWERED clause is
+  // UNKNOWN — never 0. The drift check runs ONLY on an answered P7; the tier bonus
+  // applies ONLY on an answered P3. The vector carries what was actually judged.
+  const p7 = a.P7;                                          // undefined = unanswered
+  const immutable = a.P3 !== undefined && a.P3 >= DEMAND_T;
+  const throwBar = immutable ? THROW_T * 0.9 : THROW_T;     // a canon law tolerates less
+  // THE PRIORITY (documented): a wrongness verdict outranks drift; both are in the vector
   if (minWrong >= throwBar) return { kind: "VIOLATION", weakest, vector: a };
-  if (p7 >= THROW_T) return { kind: "DRIFT", weakest: "P7", vector: a };
+  if (p7 !== undefined && p7 >= THROW_T) return { kind: "DRIFT", weakest: "P7", vector: a };
   if (minWrong >= DEMAND_T) return { kind: "SUSPECT", weakest, vector: a };
   return { kind: "LAW", weakest: null, vector: a };
 }

@@ -49,7 +49,7 @@ export function lawCard(target: string, laws: LawEntity[]): FactCard | null {
 export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): FactCard | null {
   const pct = (n?: number) => (typeof n === "number" ? n.toFixed(3) : "n/a");
   // FIX (audit cards.ts:61): a wrongness verdict with NO laws is a JUDGE artifact, not a law card
-  if (v.kind !== "LAW" && v.kind !== "JUDGE_DOWN" && laws.length === 0) return null;
+  if (v.kind !== "LAW" && v.kind !== "JUDGE_DOWN" && v.kind !== "INCONCLUSIVE" && laws.length === 0) return null;
   if (v.kind === "JUDGE_DOWN") {
     return {
       shape: "STALE",
@@ -60,9 +60,24 @@ export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): Fact
       total: 0,   // FIX (audit cards.ts:53): the stale condition is ONE measured fact
     };
   }
+  // FIX C (the audit: an INCONCLUSIVE verdict emitted ZERO cards — a SILENT pass).
+  // The agent must SEE that the judgment could not be reached.
+  if (v.kind === "INCONCLUSIVE") {
+    return {
+      shape: "SUSPECT",
+      title: `INCONCLUSIVE — the judge could not reach a verdict (weakest: ${v.weakest ?? "none"})`,
+      rows: [
+        `the unanswered/undecided clause: ${v.weakest ?? "(no deciding clause answered)"}`,
+        `vector: ${Object.entries(v.vector).map(([k, n]) => `${k}=${Number(n).toFixed(3)}`).join(" ") || "(empty)"}`,
+      ],
+      severity: SEVERITY.Hint,   // an INFO — the agent knows the judgment failed
+      source: "plutus/suspect",
+      total: 1,
+    };
+  }
   if (v.kind === "LAW") return null;                  // the law card already informs
   // FIX (audit cards.ts:85): an explicit kind check — an unknown kind yields NO card
-  if (v.kind !== "VIOLATION" && v.kind !== "DRIFT" && v.kind !== "SUSPECT") return null;
+  if (v.kind !== "VIOLATION" && v.kind !== "DRIFT" && v.kind !== "SUSPECT" && v.kind !== "INCONCLUSIVE") return null;
   // FIX (audit cards.ts:67): attribute by the WEAKEST clause — P4/P5/P6 = wrongness (an IMMUTABLE
   // law preferred), P7 = drift (a ruling). The weakest node decides the cited law.
   const law = v.weakest && v.weakest !== "P7"

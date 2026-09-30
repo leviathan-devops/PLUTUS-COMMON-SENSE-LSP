@@ -50,3 +50,28 @@ test("test_declarations_in_reads_exports", () => {
   expect(d).toContain("Trade");
   expect(d).not.toContain("privateFn");          // the negative half
 });
+
+/**
+ * FIX D (the audit: the spec's §6 S1 `test_lsp_selftest_emits_token` existed in ZERO test
+ * files — an unmet requirement reported met). The selftest's contract: a fixture graph + a
+ * probe file -> >=1 tokenized card -> exit 0.
+ */
+test("test_lsp_selftest_emits_token", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const root = "/tmp/pcsl-selftest-probe";
+  mkdirSync(`${root}/.omp/graph-intelligence/layers/semantica`, { recursive: true });
+  writeFileSync(`${root}/tsconfig.json`, "{}");
+  writeFileSync(
+    `${root}/.omp/graph-intelligence/layers/semantica/kg.json`,
+    JSON.stringify({ entities: [{ id: "law::SL-CAP", name: "SL-CAP", type: "law", statement: "the stop-loss must never exceed 150 pips", tier: "IMMUTABLE", anchor: "engine3:307" }], relationships: [] }),
+  );
+  writeFileSync(`${root}/probe.ts`, "export const STOP_LOSS = 200;\n");
+  const r = spawnSync("bun", [`${import.meta.dir}/../scripts/plutus-lsp.ts`, "--selftest", `${root}/probe.ts`, "--no-judge"], {
+    env: { ...process.env, PLUTUS_L1_PATH: `${root}/.omp/graph-intelligence/layers/semantica/kg.json` },
+    encoding: "utf8",
+    timeout: 60000,
+  });
+  expect(r.status).toBe(0);                                   // exit 0
+  expect(r.stderr).toContain("SELFTEST OK");                  // >=1 tokenized card
+  expect(r.stdout).toContain("plutus/law");                   // the token emitted
+});

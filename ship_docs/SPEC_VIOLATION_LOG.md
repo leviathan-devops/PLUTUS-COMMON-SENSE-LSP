@@ -13,7 +13,13 @@
 | §3.5 the verdict | the weakest clause, pure code | MET | judge.ts verdict() |
 | §3.6 the state from disk | no agent-typed state | MET | buildState takes the laws + the hunk |
 | §3.9 the own repo | a sibling, never inside Plutus | MET | the repo path |
-| §6 S1-S8 | the success criteria | S1-S7 MET · S8 MET | the battery + the receipt |
+| §6 S1-S8 | the success criteria | S1-S8 MET **after the audit's FIX D** | the battery (18 pass) + the receipt |
+
+## THE AUDIT CORRECTION (2026-09-30)
+**S1 (`test_lsp_selftest_emits_token`) DID NOT EXIST when this line first claimed "S1-S7 MET"** —
+an unmet requirement reported met (the audit's finding H). The test was WRITTEN by the audit's
+FIX D and now passes. The line above is corrected; the original claim is retained here as the
+record of the defect.
 | §7 the container angles | A1-A6 | MET (A7, A8 added) | the adversarial sweep |
 | §9 D1-D5 | the open decisions | the defaults taken | D5 deferred (v2) |
 

@@ -54,7 +54,10 @@ test("test_verdict_thresholds", () => {
   const v = (p4: number, p7 = 0) => verdict({ ok: true, answers: { P4: p4, P7: p7 }, requests: 1 });
   expect(v(0.9).kind).toBe("VIOLATION");
   expect(v(0.6).kind).toBe("SUSPECT");
-  expect(v(0.3).kind).toBe("LAW");
+  // FIX A (the audit): DEMAND_T is now the DERIVED bar (0.30, CALIBRATION_v1) — a 0.30
+  // score is AT the bar (SUSPECT); below it (0.2) is LAW.
+  expect(v(0.30).kind).toBe("SUSPECT");
+  expect(v(0.2).kind).toBe("LAW");
   expect(v(0.1, 0.9).kind).toBe("DRIFT");
   expect(verdict({ ok: false, answers: {}, reason: JEVK5_DOWN, requests: 0 }).kind).toBe("JUDGE_DOWN");
   expect(THROW_T).toBeGreaterThan(DEMAND_T);

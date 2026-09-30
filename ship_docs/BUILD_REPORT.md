@@ -23,7 +23,7 @@ diagnostic — before the agent can derail. It INFORMS; it never blocks (the pol
 | tier | what | the artifact |
 |---|---|---|
 | L0 | the typecheck | `bun test` loads + runs (the TS is executed, not just parsed) |
-| L1 | the unit | `bun test tests/` → **17 pass / 0 fail** |
+| L1 | the unit | `bun test tests/` → **18 pass / 0 fail (the audit added test_lsp_selftest_emits_token)** |
 | L2 | the script test (the real modules, the real graph, the live judge) | `--selftest mirror.ts` → 2 cards + 5 live nouls |
 | L3 | the driven server (the real stdio frames) | `/tmp/plutus-lsp-receipts.log` → `PUBLISH n=3 … verdict=SUSPECT` |
 | L4 | the live TUI | **PENDING** — the LSP binds at session construction (T1) |

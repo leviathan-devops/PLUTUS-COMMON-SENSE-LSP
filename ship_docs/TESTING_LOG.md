@@ -4,7 +4,7 @@
 | tier | the scope | the tool | the state |
 |---|---|---|---|
 | L0 | the typecheck | `bun test` (the TS executes) | PASS |
-| L1 | the unit — the pure fns | `bun test tests/` | **17 pass / 0 fail** |
+| L1 | the unit — the pure fns | `bun test tests/` | **18 pass / 0 fail (the audit added test_lsp_selftest_emits_token)** |
 | L2 | the script test — the real modules + the real graph + the LIVE judge | `--selftest` | PASS (2 cards, 5 nouls) |
 | L3 | the driven server — the real stdio frames | the drive harness | PASS (PUBLISH n=3) |
 | L4 | the live TUI | the omp LSP runtime | **PENDING (T1)** |
