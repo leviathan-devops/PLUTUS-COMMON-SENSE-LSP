@@ -1,0 +1,3 @@
+[test]
+# the checkpoint carries a COPY of the suite — never run it (the live tests are authoritative)
+pathIgnorePatterns = ["Checkpoints/**", "node_modules/**", "dist/**"]

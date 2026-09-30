@@ -176,4 +176,5 @@ export function fileCards(target: string, laws: LawEntity[], v: Verdict | null, 
   if (v) { const vc = verdictCard(target, v, laws); if (vc) out.push(vc); }
   return out;
 }
+// definitive probe
 

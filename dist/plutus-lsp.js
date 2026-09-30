@@ -37,11 +37,21 @@ function resolveRoot(startFile) {
   }
   throw new Error(`${PLUTUS_NO_ROOT}: no root marker (${ROOT_MARKERS.join(" | ")}) above ${startFile}`);
 }
+var KNOWN_L1_PATHS = [
+  "/home/leviathan/.omp/wt/plutus-main-66dfa4c/PLUTUS/agent/.omp/graph-intelligence/layers/semantica/kg.json",
+  "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json"
+];
 function l1PathFor(root) {
   const env = process.env.PLUTUS_L1_PATH;
   if (env)
     return env;
-  return join(root, ".omp", "graph-intelligence", "layers", "semantica", "kg.json");
+  const local = join(root, ".omp", "graph-intelligence", "layers", "semantica", "kg.json");
+  if (existsSync(local))
+    return local;
+  for (const known of KNOWN_L1_PATHS)
+    if (existsSync(known))
+      return known;
+  return local;
 }
 function loadStore(startFile) {
   const root = resolveRoot(startFile);

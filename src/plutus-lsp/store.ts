@@ -68,11 +68,27 @@ export function resolveRoot(startFile: string): string {
   throw new Error(`${PLUTUS_NO_ROOT}: no root marker (${ROOT_MARKERS.join(" | ")}) above ${startFile}`);
 }
 
-/** The L1 kg.json for a root. Env override: PLUTUS_L1_PATH. */
+/**
+ * The L1 kg.json for a root.
+ * FIX (the live-TUI proof's REFUSE): the server was spawned + the handshake completed, but it
+ * refused with PLUTUS_NO_STORE — the repo's cwd carries no L1. The discovery now tries, in order:
+ *   1. PLUTUS_L1_PATH (an explicit override is AUTHORITATIVE — an absent one → PLUTUS_NO_STORE)
+ *   2. <root>/.omp/graph-intelligence/layers/semantica/kg.json (the cwd's own)
+ *   3. THE KNOWN PLUTUS LOCATIONS (the wt tree + the MASTER_CONTEXT corpus) — so a Plutus
+ *      session finds the canon without an env var.
+ */
+export const KNOWN_L1_PATHS = [
+  "/home/leviathan/.omp/wt/plutus-main-66dfa4c/PLUTUS/agent/.omp/graph-intelligence/layers/semantica/kg.json",
+  "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json",
+];
+
 export function l1PathFor(root: string): string {
   const env = process.env.PLUTUS_L1_PATH;
-  if (env) return env;   // an explicit override is AUTHORITATIVE (an absent one → PLUTUS_NO_STORE)
-  return join(root, ".omp", "graph-intelligence", "layers", "semantica", "kg.json");
+  if (env) return env;   // an explicit override is AUTHORITATIVE
+  const local = join(root, ".omp", "graph-intelligence", "layers", "semantica", "kg.json");
+  if (existsSync(local)) return local;
+  for (const known of KNOWN_L1_PATHS) if (existsSync(known)) return known;   // FIX: the canon discovery
+  return local;   // absent everywhere -> loadStore throws the NAMED PLUTUS_NO_STORE
 }
 
 /**
