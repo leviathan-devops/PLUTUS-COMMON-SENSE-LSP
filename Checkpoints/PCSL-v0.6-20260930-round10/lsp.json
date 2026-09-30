@@ -1,0 +1,12 @@
+{
+  "idleTimeoutMs": 300000,
+  "servers": {
+    "plutus-lsp": {
+      "command": "bun",
+      "args": ["/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/scripts/plutus-lsp.ts", "--stdio"],
+      "fileTypes": [".ts", ".tsx", ".js", ".md"],
+      "rootMarkers": ["tsconfig.json"],
+      "warmupTimeoutMs": 20000
+    }
+  }
+}
