@@ -273,7 +273,7 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
   const scored = candidates.map((l) => {
     const lt = tokensOf(`${l.name} ${l.statement}`);
     const overlap = lt.filter((t) => ht.has(t)).length;
-    // also reward an exact numeric mention (a law about 150 pips vs a hunk with 150)
+    // also reward an exact numeric mention (a law about 36 pips vs a hunk with 36)
     const nums = (hunk.match(/\d+(?:\.\d+)?/g) ?? []).filter((n) => l.statement.includes(n)).length;
     return { l, score: overlap * 2 + nums * 3 };
   });

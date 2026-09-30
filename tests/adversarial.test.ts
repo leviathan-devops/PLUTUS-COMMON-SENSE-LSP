@@ -43,7 +43,7 @@ test("A4_a_known_violation_renders_the_VIOLATION_token", () => {
   // crossing), then the renderer. Both halves now.
   const v = verdict({ ok: true, answers: { P4: 0.91 }, requests: 1 });   // the real decision
   expect(v.kind).toBe("VIOLATION");                                      // the threshold crossed
-  const card = verdictCard(v, [{ law: { id: "law::IRON-01", name: "IRON-01", statement: "SL cap 150 pips", tier: "IMMUTABLE", anchor: "b:1", source: "MC" }, p: 0.9 }]);
+  const card = verdictCard(v, [{ law: { id: "law::IRON-01", name: "IRON-01", statement: "SL ceiling 36 pips (D17)", tier: "IMMUTABLE", anchor: "b:1", source: "MC" }, p: 0.9 }]);
   expect(card).toBeDefined();
   expect(card!.source).toBe("plutus/violation");
   expect(card!.severity).toBe(1);

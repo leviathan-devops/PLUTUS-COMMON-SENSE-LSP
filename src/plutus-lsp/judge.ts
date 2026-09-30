@@ -186,7 +186,7 @@ export function verdict(v: JudgeVector): Verdict {
  */
 export const OBSERVABLE: Array<{ match: RegExp; q: string }> = [
   { match: /stop-?loss|sl cap|150 ?pip|sl_?cap/i,
-    q: "Does the evidence state a stop-loss value GREATER than 150 pips? (150 is the cap; read the number)" },
+    q: "Does the evidence state a stop-loss value GREATER than 36 pips? (36 is the D17 ceiling; read the number)" },
   { match: /one tp|tp1|take-?profit|single tp/i,
     q: "Does the evidence define MORE THAN ONE take-profit target (a TP1, TP2, or TP3)?" },
   { match: /pair format|EUR\/USD|slashes/i,

@@ -63,7 +63,7 @@ test("test_lsp_selftest_emits_token", async () => {
   writeFileSync(`${root}/tsconfig.json`, "{}");
   writeFileSync(
     `${root}/.omp/graph-intelligence/layers/semantica/kg.json`,
-    JSON.stringify({ entities: [{ id: "law::SL-CAP", name: "SL-CAP", type: "law", statement: "the stop-loss must never exceed 150 pips", tier: "IMMUTABLE", anchor: "engine3:307" }], relationships: [] }),
+    JSON.stringify({ entities: [{ id: "law::SL-CAP", name: "SL-CAP", type: "law", statement: "SL ceiling = 36 pips HARD (D17)", tier: "IMMUTABLE", anchor: "engine3:307" }], relationships: [] }),
   );
   writeFileSync(`${root}/probe.ts`, "export const STOP_LOSS = 200;\n");
   const r = spawnSync("bun", [`${import.meta.dir}/../scripts/plutus-lsp.ts`, "--selftest", `${root}/probe.ts`, "--no-judge"], {
