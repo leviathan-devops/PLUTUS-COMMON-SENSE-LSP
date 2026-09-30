@@ -6,11 +6,18 @@
  *   The CODE assembles the state from disk; the model answers numbers; the CODE decides.
  *   ONE batched pass — a chain of 7 nouls costs the same as one.
  *   A down judge is the NAMED `JEVK5_DOWN`, never a fabricated answer.
- *   overall = min(all clauses) — the WEAKEST clause, never an average.
+ *   wrongness = MAX over the ANSWERED wrongness clauses (this layer INFORMS; a missed
+ *   violation is the expensive error — see verdict() for the composition fix)
  */
 
 import { JEVK5_DOWN, type LawEntity } from "./store.ts";
 export { JEVK5_DOWN } from "./store.ts";   // re-export (the judge owns the refusal)
+
+// FIX (audit: loud, never silent) — the library has no stderr channel of its own; the host
+// (scripts/plutus-lsp.ts) installs its receipt writer here. Until installed, notes go nowhere
+// (a no-op), never throw. Every "loud" fix in this file routes through this hook.
+export let receipt: (line: string) => void = () => {};
+export function setReceipt(fn: (line: string) => void): void { receipt = fn; }
 
 export const JEVK5_URL_DEFAULT = "http://127.0.0.1:8090/v1/systemone";
 export const JEVK5_HEALTH_DEFAULT = "http://127.0.0.1:8090/health";
@@ -38,19 +45,66 @@ export interface JudgeVector {
   requests: number;
 }
 
+/**
+ * THE SHARED JEV FETCH — one helper for health()/chain()/relevancePass(): AbortController +
+ * setTimeout + fetch + the JEVK5_DOWN mapping + the [0,1] answer validation. Added because the
+ * three call sites drifted (the relevance timeout, the answer validation, the cleanup).
+ */
+export interface JevAnswer { answers: Record<string, number>; requests: number; latencyMs: number }
+export async function jevk5Fetch(
+  state: string,
+  questions: Record<string, { type: "noul"; instructions: string }>,
+  timeoutMs: number,
+): Promise<{ ok: true; value: JevAnswer } | { ok: false; reason: string }> {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs);
+  const started = Date.now();
+  try {
+    const r = await fetch(jevk5Url(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ state, questions }),
+      signal: ctl.signal,
+    });
+    if (!r.ok) return { ok: false, reason: `${JEVK5_DOWN}: HTTP ${r.status}` };
+    const j = (await r.json()) as { answers?: Record<string, { noul?: unknown }>; latency_ms?: number } | null;
+    if (!j || typeof j !== "object") return { ok: false, reason: `${JEVK5_DOWN}: malformed body` };
+    // FIX (audit: answers must be a PLAIN object) — `?? {}` masked a missing/invalid field as
+    // empty success (ok:true, zero answers → every relevance -1). An array/null answers is a
+    // malformed body, named loudly.
+    const raw = (j as { answers?: unknown }).answers;
+    if (raw === undefined) return { ok: false, reason: `${JEVK5_DOWN}: missing answers field` };
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, reason: `${JEVK5_DOWN}: answers is ${Array.isArray(raw) ? "an array" : typeof raw}` };
+    const answers: Record<string, number> = {};
+    for (const [k, a] of Object.entries(raw as Record<string, { noul?: unknown }>)) {
+      const v = (a as { noul?: unknown } | undefined)?.noul;
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1) answers[k] = v;
+    }
+    return { ok: true, value: { answers, requests: 1, latencyMs: j.latency_ms ?? Date.now() - started } };
+  } catch (e) {
+    return { ok: false, reason: `${JEVK5_DOWN}: ${e instanceof Error ? e.message : String(e)}` };
+  } finally { clearTimeout(t); }
+}
+
 /** The health probe. Absent → the NAMED JEVK5_DOWN (never a fabricated noul). */
 export async function health(timeoutMs = 1500): Promise<{ ok: boolean; reason?: string }> {
+  const errOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));   // FIX (audit: instanceof fallback)
   try {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), timeoutMs);
     try {
       const r = await fetch(jevk5Health(), { signal: ctl.signal });
       if (!r.ok) return { ok: false, reason: `${JEVK5_DOWN}: health HTTP ${r.status}` };
-      const j = (await r.json()) as { ok?: boolean; model?: string };
-      return j.ok ? { ok: true } : { ok: false, reason: `${JEVK5_DOWN}: health says ${JSON.stringify(j)}` };
+      const j = (await r.json()) as unknown;   // FIX (audit: null guard) — a null/non-object body must not throw
+      // FIX (audit: arrays rejected EXPLICITLY) — typeof [] is "object", so the old single
+      // check let arrays fall through to the generic path. An array health body is malformed.
+      if (Array.isArray(j)) return { ok: false, reason: `${JEVK5_DOWN}: health body is an array` };
+      if (!j || typeof j !== "object") return { ok: false, reason: `${JEVK5_DOWN}: health body is ${typeof j}` };
+      const ok = (j as { ok?: unknown }).ok;
+      return ok === true ? { ok: true } : { ok: false, reason: `${JEVK5_DOWN}: health says ${JSON.stringify(j).slice(0, 120)}` };
     } finally { clearTimeout(t); }   // FIX (audit judge.ts:42): cleared on EVERY path
   } catch (e) {
-    return { ok: false, reason: `${JEVK5_DOWN}: ${(e as Error).message}` };
+    return { ok: false, reason: `${JEVK5_DOWN}: ${errOf(e)}` };
   }
 }
 
@@ -59,42 +113,40 @@ export async function health(timeoutMs = 1500): Promise<{ ok: boolean; reason?: 
  * The state is the EVIDENCE TEXT assembled by the caller FROM DISK (the anti-gaming core).
  */
 export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], timeoutMs = 6000, p4Override?: string): Promise<JudgeVector> {
+  // FIX (audit: empty-nodes first) — a vacuous input must not cost a network round-trip,
+  // and a JUDGE_NO_NODES must never be masked as JEVK5_DOWN.
+  const seen = new Set<NodeId>();
+  const deduped = nodes.filter((n) => (seen.has(n) ? false : (seen.add(n), true)));   // FIX (audit: dedupe nodes)
+  if (deduped.length === 0) return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const h = await health();
   if (!h.ok) return { ok: false, answers: {}, reason: h.reason, requests: 0 };
 
+  // FIX (audit: validate the NodeId) — CHAIN[id].q throws TypeError on a runtime-invalid id
+  // (via cast), rejecting the promise instead of returning a JudgeVector. Invalid ids are
+  // filtered with a loud receipt, never a throw.
+  const valid = deduped.filter((id) => id in CHAIN);
+  const invalid = deduped.filter((id) => !(id in CHAIN));
+  if (invalid.length > 0) receipt(`CHAIN invalid NodeId(s): ${invalid.join(",")} — filtered, never judged`);
+  if (valid.length === 0) return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const questions: Record<string, { type: "noul"; instructions: string }> = {};
-  for (const id of nodes) questions[id] = { type: "noul", instructions: id === "P4" && p4Override ? p4Override : CHAIN[id].q };
+  for (const id of valid) questions[id] = { type: "noul", instructions: id === "P4" && p4Override ? p4Override : CHAIN[id].q };
 
-  try {
-    if (nodes.length === 0) return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };  // FIX (audit:61) no vacuous ok
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), timeoutMs);
-    const started = Date.now();
-    try {
-      const r = await fetch(jevk5Url(), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ state, questions }),
-        signal: ctl.signal,
-      });
-      if (!r.ok) return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: HTTP ${r.status}`, requests: 1 };
-      const j = (await r.json()) as { answers?: Record<string, { noul?: unknown }>; latency_ms?: number } | null;
-      if (j === null || typeof j !== "object") return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: malformed body`, requests: 1 };
-      const answers: Partial<Record<NodeId, number>> = {};
-      for (const id of nodes) {
-        const v = (j.answers as Record<string, { noul?: unknown }> | undefined)?.[id]?.noul;
-        // FIX (audit judge.ts:79): a finite number in [0,1] only — a corrupt judge cannot force a verdict
-        if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1) answers[id] = v;
-      }
-      const answered = Object.keys(answers).length;
-      if (answered !== nodes.length) {
-        return { ok: false, answers, reason: `JUDGE_ANSWER_COUNT: ${answered}/${nodes.length}`, requests: 1, latencyMs: j.latency_ms ?? (Date.now() - started) };
-      }
-      return { ok: true, answers, requests: 1, latencyMs: j.latency_ms ?? (Date.now() - started) };
-    } finally { clearTimeout(t); }   // FIX (audit judge.ts:72): cleared on EVERY path
-  } catch (e) {
-    return { ok: false, answers: {}, reason: `${JEVK5_DOWN}: ${e instanceof Error ? e.message : String(e)}`, requests: 1 };
+  // FIX (audit: chain reuses jevk5Fetch) — the old body reimplemented AbortController+fetch+
+  // [0,1] validation inline and had already drifted (entries-loop vs per-node loop, different
+  // malformed-body handling). One helper, one validation, no drift. The per-node [0,1] filter
+  // runs on the helper's validated answers so a corrupt judge still cannot force a verdict.
+  const res = await jevk5Fetch(state, questions, timeoutMs);
+  if (!res.ok) return { ok: false, answers: {}, reason: res.reason, requests: 1 };
+  const answers: Partial<Record<NodeId, number>> = {};
+  for (const id of valid) {
+    const v = res.value.answers[id];
+    if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1) answers[id] = v;
   }
+  const answered = Object.keys(answers).length;
+  if (answered !== valid.length) {
+    return { ok: false, answers, reason: `JUDGE_ANSWER_COUNT: ${answered}/${valid.length}`, requests: 1, latencyMs: res.value.latencyMs };
+  }
+  return { ok: true, answers, requests: 1, latencyMs: res.value.latencyMs };
 }
 
 /** The evidence text — assembled FROM DISK by the caller (never agent prose). */
@@ -132,8 +184,16 @@ const bar = (raw: string | undefined, dflt: number): number => {
   const n = Number(raw);
   return raw !== undefined && Number.isFinite(n) && n > 0 && n < 1 ? n : dflt;
 };
-export const THROW_T = bar(process.env.PLUTUS_THROW_T, 0.85);   // the VIOLATION bar (policy)
-export const DEMAND_T = bar(process.env.PLUTUS_DEMAND_T, 0.30); // the SUSPECT bar (DERIVED)
+// FIX (audit: single threshold source) — the old consts froze at import while the getters
+// re-read env at call time: a hot-retune reached verdict() but NOT a consumer importing the
+// const. The consts now delegate to the same getters verdict()/partitionByRelevance() use.
+// FIX (audit: lazy thresholds) — the getters read env at CALL time, consistent with
+// jevk5Url(). Hot-retune works. The consts below delegate to the getters (single source).
+export const throwT = () => bar(process.env.PLUTUS_THROW_T, 0.85);
+export const demandT = () => bar(process.env.PLUTUS_DEMAND_T, 0.30);
+export const relevanceT = () => bar(process.env.PLUTUS_RELEVANCE_T, 0.3);
+export const THROW_T = throwT();   // the VIOLATION bar (policy) — compat alias, same source
+export const DEMAND_T = demandT(); // the SUSPECT bar (DERIVED) — compat alias, same source
 
 export interface Verdict {
   kind: "VIOLATION" | "SUSPECT" | "DRIFT" | "LAW" | "INCONCLUSIVE" | "JUDGE_DOWN";
@@ -159,7 +219,7 @@ export function verdict(v: JudgeVector): Verdict {
   // FIX (the container S5, measured): jurisdiction comes from THE LAWS, not the model's path read.
   // A file that matched canon laws IS in-scope BY CONSTRUCTION — P1 is recorded in the vector
   // (it informs) but does NOT block the verdict; P2 (the law presence) is the real gate.
-  if (a.P2 !== undefined && a.P2 < DEMAND_T) return { kind: "INCONCLUSIVE", weakest: "P2", vector: a };
+  if (a.P2 !== undefined && a.P2 < demandT()) return { kind: "INCONCLUSIVE", weakest: "P2", vector: a };
   // ★ THE COMPOSITION FIX (the derailment probe, 2026-09-30). The rule was min() over the
   //   wrongness clauses — the "weakest clause, never an average" law. MEASURED, that law is
   //   BACKWARDS for this layer: the clauses are about DIFFERENT law kinds, so an inapplicable
@@ -178,12 +238,15 @@ export function verdict(v: JudgeVector): Verdict {
   // UNKNOWN — never 0. The drift check runs ONLY on an answered P7; the tier bonus
   // applies ONLY on an answered P3. The vector carries what was actually judged.
   const p7 = a.P7;                                          // undefined = unanswered
-  const immutable = a.P3 !== undefined && a.P3 >= DEMAND_T;
-  const throwBar = immutable ? THROW_T * 0.9 : THROW_T;     // a canon law tolerates less
+  // FIX (audit: NO import-time snapshots) — THROW_T/DEMAND_T freeze at import; the getters
+  // read env at call time, so a hot-retune reaches VIOLATION/DRIFT/SUSPECT too.
+  const TT = throwT(), DT = demandT();
+  const immutable = a.P3 !== undefined && a.P3 >= DT;
+  const throwBar = immutable ? TT * 0.9 : TT;             // a canon law tolerates less
   // THE PRIORITY (documented): a wrongness verdict outranks drift; both are in the vector
   if (maxWrong >= throwBar) return { kind: "VIOLATION", weakest: strongest, vector: a };
-  if (p7 !== undefined && p7 >= THROW_T) return { kind: "DRIFT", weakest: "P7", vector: a };
-  if (maxWrong >= DEMAND_T) return { kind: "SUSPECT", weakest: strongest, vector: a };
+  if (p7 !== undefined && p7 >= TT) return { kind: "DRIFT", weakest: "P7", vector: a };
+  if (maxWrong >= DT) return { kind: "SUSPECT", weakest: strongest, vector: a };
   return { kind: "LAW", weakest: null, vector: a };
 }
 
@@ -261,7 +324,7 @@ export interface RelevanceRow { index: number; lawId: string; p: number }
  * discrimination is not yet exercised — a mixed-candidate fixture (a file that lexically matches
  * one law but is actually about another) is the next measurement.
  */
-export const RELEVANCE_T = bar(process.env.PLUTUS_RELEVANCE_T ?? 0.3);
+export const RELEVANCE_T = relevanceT();   // compat alias — same single source as the getter
 
 export async function relevancePass(
   laws: LawEntity[],
@@ -271,16 +334,29 @@ export async function relevancePass(
   //   DISAGREEMENT is the most-governed case), so the batch needs real headroom. The
   //   6s default aborted and degraded to "lexical, no judge" — a silent intelligence loss.
   timeoutMs = 20000,
-): Promise<{ ok: boolean; scored: RelevanceRow[]; reason?: string; requests: number; latencyMs?: number }> {
-  if (laws.length === 0) return { ok: true, scored: [], requests: 0 };   // the anti-phantom law
+): Promise<{ ok: boolean; scored: RelevanceRow[]; reason?: string; requests: number; latencyMs?: number; judged: number; total: number; dropped: number }> {
+  // FIX (audit: the cap is VISIBLE) — the return carries judged/total/dropped so a caller
+  // with 20 candidates sees 12 rows AND knows the tail was never judged (fail-open
+  // partial-as-complete is banned).
+  if (laws.length === 0) return { ok: true, scored: [], requests: 0, judged: 0, total: 0, dropped: 0 };   // the anti-phantom law
   const h = await health();
-  if (!h.ok) return { ok: false, scored: [], reason: h.reason, requests: 0 };
+  if (!h.ok) return { ok: false, scored: [], reason: h.reason, requests: 0, judged: 0, total: laws.length, dropped: 0 };
 
-  // ONE state, ONE noul per candidate — the batched pass.
-  const subject = filePath.split("/").pop() ?? filePath;
-  const lines = laws
+  // FIX (audit: cap the relevance batch) — the state is one batched pass; an uncapped
+  // candidate list risks an oversized request. Cap at 12 (the detector's wide net) and
+  // MARK the truncation so the caller knows the tail was never judged.
+  const CAPPED = 12;
+  const judged = laws.slice(0, CAPPED);
+  const dropped = laws.length - judged.length;
+
+  // FIX (audit: cross-platform subject) — backslashes split, trailing slashes yield no
+  // empty base, and the parent dir is preserved so same-basename files disambiguate.
+  const normPath = filePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const segs = normPath.split("/").filter(Boolean);
+  const subject = segs.length > 1 ? `${segs[segs.length - 2]}/${segs[segs.length - 1]}` : (segs[0] ?? filePath);
+  const lines = judged
     .map((l, i) => `Candidate ${i + 1} [${l.tier}] ${l.name}: ${l.statement.slice(0, 160)}`)
-    .join("\n");
+    .join("\n") + (dropped > 0 ? `\n... [${dropped} more candidates truncated — never judged]` : "");
   const state = [
     `FILE BEING WRITTEN: ${subject}`,
     `DECLARATIONS IN THE HUNK:`,
@@ -290,7 +366,7 @@ export async function relevancePass(
   ].join("\n");
 
   const questions: Record<string, { type: "noul"; instructions: string }> = {};
-  laws.forEach((_, i) => {
+  judged.forEach((_, i) => {
     questions[`R${i + 1}`] = {
       type: "noul",
       instructions:
@@ -303,45 +379,43 @@ export async function relevancePass(
     };
   });
 
-  try {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), timeoutMs);
-    const started = Date.now();
-    try {
-      const r = await fetch(jevk5Url(), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ state, questions }),
-        signal: ctl.signal,
-      });
-      if (!r.ok) return { ok: false, scored: [], reason: `${JEVK5_DOWN}: HTTP ${r.status}`, requests: 1 };
-      const j = (await r.json()) as { answers?: Record<string, { noul?: unknown }>; latency_ms?: number } | null;
-      if (!j || typeof j !== "object") return { ok: false, scored: [], reason: `${JEVK5_DOWN}: malformed body`, requests: 1 };
-      const scored: RelevanceRow[] = [];
-      for (const l of laws) {
-        const key = `R${laws.indexOf(l) + 1}`;
-        const v = (j.answers as Record<string, { noul?: unknown }> | undefined)?.[key]?.noul;
-        // an unreadable answer is UNKNOWN, never a silent 0 (the engine's law)
-        scored.push({ index: laws.indexOf(l), lawId: l.id, p: typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? v : -1 });
-      }
-      return { ok: true, scored, requests: 1, latencyMs: j.latency_ms ?? Date.now() - started };
-    } finally { clearTimeout(t); }
-  } catch (e) {
-    return { ok: false, scored: [], reason: `${JEVK5_DOWN}: ${e instanceof Error ? e.message : String(e)}`, requests: 1 };
-  }
+  const res = await jevk5Fetch(state, questions, timeoutMs);
+  if (!res.ok) return { ok: false, scored: [], reason: res.reason, requests: 1, judged: judged.length, total: laws.length, dropped };
+  const scored: RelevanceRow[] = [];
+  judged.forEach((l, i) => {
+    const v = res.value.answers[`R${i + 1}`];
+    // an unreadable answer is UNKNOWN, never a silent 0 (the engine's law)
+    scored.push({ index: i, lawId: l.id, p: typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? v : -1 });
+  });
+  return { ok: true, scored, requests: 1, latencyMs: res.value.latencyMs, judged: judged.length, total: laws.length, dropped };
+}
+
+export interface RelevancePartition {
+  relevant: LawEntity[];
+  rejected: Array<{ law: LawEntity; p: number }>;
+  /** candidates the judge could not read (p = -1) — judge-said-no is NOT the same verdict */
+  unknown: LawEntity[];
 }
 
 /** Split the candidates into (relevant, irrelevant) at the bar. An UNKNOWN (-1) is never shown. */
 export function partitionByRelevance(
   laws: LawEntity[],
   rows: RelevanceRow[],
-): { relevant: LawEntity[]; rejected: Array<{ law: LawEntity; p: number }> } {
+): RelevancePartition {
+  const byId = new Map(laws.map((l) => [l.id, l]));
   const relevant: LawEntity[] = [];
   const rejected: Array<{ law: LawEntity; p: number }> = [];
-  laws.forEach((l, i) => {
-    const row = rows.find((r) => r.index === i);
-    const p = row ? row.p : -1;
-    if (p >= RELEVANCE_T) relevant.push(l); else rejected.push({ law: l, p });
-  });
-  return { relevant, rejected };
+  const unknown: LawEntity[] = [];
+  let unmatched = 0;
+  for (const r of rows) {
+    // FIX (audit: unmatched rows are COUNTED) — a stale/misordered row (wrong lawId) is still
+    // never assigned, but the count surfaces in the receipt so a hallucinated judge reply
+    // (wrong lawId, missing Rk) cannot disappear silently.
+    const law = byId.get(r.lawId);
+    if (!law) { unmatched++; continue; }
+    if (r.p < 0) unknown.push(law);
+    else if (r.p >= relevanceT()) relevant.push(law); else rejected.push({ law, p: r.p });
+  }
+  if (unmatched > 0) receipt(`PARTITION unmatched=${unmatched}/${rows.length} rows (stale or hallucinated lawId)`);
+  return { relevant, rejected, unknown };
 }

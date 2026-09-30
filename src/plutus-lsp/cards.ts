@@ -17,6 +17,10 @@
  */
 
 // ── THE TOKENS (a single-card filterable source, mirroring GI_LSP_TOKENS) ─────────────────
+// NOTE (audit: dead filter token): `plutus/tier` is exported for backward compat but no card
+// emits it — the tier now rides inside each law card's TIER row. A consumer filtering on
+// `plutus/tier` alone will wait forever; filter on `plutus/law` instead. Kept, not removed,
+// so existing filters do not break.
 export const PLUTUS_LSP_TOKENS = [
   "plutus/law",       // one governing law, with the judge's relevance probability
   "plutus/violation", // the judged breach of a governing law
@@ -55,7 +59,7 @@ import type { Verdict } from "./judge.ts";
 /** A law + the judge's measured relevance probability (the kernel's output). */
 export interface JudgedLaw {
   law: LawEntity;
-  /** the judge's relevance noul, 0..1, or -1 when UNREADABLE (never shown as a number). */
+  /** the judge's relevance score, 0..1, or -1 when UNREADABLE (never shown as a number). */
   p: number;
 }
 
@@ -68,10 +72,14 @@ export interface JudgedLaw {
  * @param total  how many candidates the detector raised (measured) — "kept/total" is the
  *               kernel's precision, shown so the agent can see the filter was narrow
  */
-export function lawCard(kept: JudgedLaw[], totalCandidates: number, judged: boolean): FactCard[] {
-  if (kept.length === 0) return [];                 // the anti-phantom law: silence, not a card
-  return kept.map(({ law, p }) => {
-    const prob = p >= 0 ? `relevance ${p.toFixed(2)}` : "relevance unread";
+export function lawCard(kept: JudgedLaw[] | null | undefined, totalCandidates: number, judged: boolean): FactCard[] {
+  if (!kept || kept.length === 0) return [];        // the anti-phantom law: silence, not a card
+  // FIX (audit: per-element guards + finite 0..1) — one malformed entry must not throw and lose
+  // every card; Infinity is NOT a measured probability (it rendered as "Infinity" in a title).
+  const clean = kept.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string");
+  return clean.map(({ law, p }) => {
+    const measured = typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
+    const prob = measured ? `relevance ${p.toFixed(2)}` : "relevance unread";
     const of = totalCandidates > kept.length ? ` · kept ${kept.length} of ${totalCandidates} candidates` : "";
     return {
       shape: "LAW" as const,
@@ -80,7 +88,9 @@ export function lawCard(kept: JudgedLaw[], totalCandidates: number, judged: bool
         `LAW: ${law.statement}`,
         `TIER: ${law.tier}${law.tier === "IMMUTABLE" ? " — never change without a recorded ruling" : ""}`,
         `SOURCE: ${law.anchor}`,
-        `JUDGE: ${prob}`,
+        // FIX (audit: lexical path mislabeled) — when no judge ran, the row says LEXICAL,
+        // never a probability (traceability: a number must come from the model that ran it)
+        judged ? `JUDGE: ${prob}` : `LEXICAL: token match, not judged`,
       ],
       severity: SEVERITY.Information,
       source: "plutus/law" as const,
@@ -94,12 +104,24 @@ export function lawCard(kept: JudgedLaw[], totalCandidates: number, judged: bool
  * The title names the breaching law; the rows carry the whole vector so the agent sees
  * WHICH clause fired and how strongly (the GI meaningCard pattern: the model is named).
  */
-export function verdictCard(v: Verdict, kept: JudgedLaw[]): FactCard | null {
-  const pct = (n?: number) => (typeof n === "number" ? n.toFixed(3) : "n/a");
+// FIX (audit: the warning names the TARGET) — the old row derived the path from the law's
+// anchor (the canon file), telling the agent it was editing the bible. The caller passes the
+// file being written; the row names THAT.
+export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | null | undefined, targetFile?: string): FactCard | null {
+  // FIX (audit: null guard) — a direct caller passing null must not throw and lose every card.
+  if (!v || !kept) return null;
+  const vector: Record<string, number> = (v.vector && typeof v.vector === "object" && !Array.isArray(v.vector)) ? v.vector : {};
+  // FIX (audit: finite-only pct) — NaN/Infinity render as "n/a", never "NaN"/"Infinity" in a title.
+  const pct = (n?: number) => (typeof n === "number" && Number.isFinite(n) ? n.toFixed(3) : "n/a");
   if (v.kind === "JUDGE_DOWN") {
+    // FIX (audit: STALE disambiguation) — two paths emit shape STALE on plutus/stale
+    // (this one + staleCard for a dead graph). The reason CODE is the machine-readable
+    // discriminator: JEVK5_* = the judge lane, PLUTUS_NO_* = the graph lane. Consumers
+    // filter on the code, never on title prose.
+    const code = (v.reason ?? "JEVK5_DOWN").split(":")[0];
     return {
       shape: "STALE",
-      title: "the judge is down — the canon could not be consulted",
+      title: `the judge is down — the canon could not be consulted [${code}]`,
       rows: [`reason: ${v.reason ?? "JEVK5_DOWN"}`],
       severity: SEVERITY.Warning,
       source: "plutus/stale",
@@ -112,7 +134,7 @@ export function verdictCard(v: Verdict, kept: JudgedLaw[]): FactCard | null {
       title: `INCONCLUSIVE — the judge could not reach a verdict (weakest clause ${v.weakest ?? "none"})`,
       rows: [
         `the undecided clause: ${v.weakest ?? "(no deciding clause answered)"}`,
-        `vector: ${Object.entries(v.vector).map(([k, n]) => `${k}=${pct(n)}`).join(" ") || "(empty)"}`,
+        `VECTOR: ${Object.entries(vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ") || "(empty)"}`,
       ],
       severity: SEVERITY.Hint,
       source: "plutus/suspect",
@@ -121,40 +143,66 @@ export function verdictCard(v: Verdict, kept: JudgedLaw[]): FactCard | null {
   }
   if (v.kind === "LAW") return null;                // the law cards already inform
 
-  // attribute to the law the verdict actually evaluated
-  const law = v.weakest && v.weakest !== "P7" ? (kept.find((k) => k.law.tier === "IMMUTABLE") ?? kept[0])?.law : kept[0]?.law;
+  // FIX (audit: attribution honesty) — the verdict names a CLAUSE, never a law. The pick is
+  // the highest-relevance survivor, which is a GUESS when the top p is UNREADABLE (-1) or tied
+  // on lexical-only paths. In that case the card is DOWNGRADED to SUSPECT (a warning, never an
+  // Error/DRIFT fact) and the title says so.
+  // FIX (audit: epsilon tie + non-finite counts) — exact-float equality missed near-ties;
+  // and a law whose p is Infinity/NaN was dropped from `scored`, so the fallback pick was
+  // marked unattributed for the wrong reason. Every finite-or-not entry is scored; only a
+  // finite 0..1 UNIQUE top is measured-attributed.
+  const scored = kept.filter((k) => k && k.law && typeof k.p === "number");
+  const finiteTop = scored.filter((k) => Number.isFinite(k.p) && k.p >= 0 && k.p <= 1).sort((a, b) => b.p - a.p);
+  const law = (finiteTop[0] ?? scored[0] ?? kept[0])?.law;
   if (!law) return null;                            // no measured law → no card, never a guess
+  const EPS = 1e-9;
+  const topTied = finiteTop.length > 1 && Math.abs(finiteTop[0].p - finiteTop[1].p) < EPS;
+  const attributed = finiteTop.length > 0 && !topTied;
 
-  const vector = Object.entries(v.vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ");
-  if (v.kind === "VIOLATION") {
+  const vecStr = Object.entries(vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ");
+  // FIX (audit: strip file:line:col in one pass) — `src/foo.ts:10:5` must become a clean path,
+  // not `src/foo.ts:10`. Windows drive paths (C:\...) survive.
+  const anchorFile = targetFile ?? law.anchor ?? "";
+  // FIX (audit: explicit kind gate) — an unknown kind coerces to SUSPECT LOUDLY: the row
+  // names the coerced kind instead of silently casting via `as`. Only VIOLATION/DRIFT survive.
+  const known = v.kind === "VIOLATION" || v.kind === "DRIFT" ? v.kind : "SUSPECT";
+  const kindNote = known === "SUSPECT" && v.kind !== "SUSPECT" ? ` (kind ${v.kind} coerced)` : "";
+  const effKind: "VIOLATION" | "DRIFT" | "SUSPECT" = !attributed ? "SUSPECT" : known;
+  if (effKind === "VIOLATION" && v.kind === "VIOLATION") {
     return {
       shape: "VIOLATION",
-      title: `VIOLATION — this change contradicts ${law.name} (${v.weakest}=${pct(v.vector[v.weakest as keyof typeof v.vector])})`,
+      title: `VIOLATION — this change contradicts ${law.name} (${v.weakest ?? "none"}=${pct(v.weakest ? vector[v.weakest as keyof typeof vector] : undefined)})`,
       rows: [
         `LAW: ${law.statement}`,
         `SOURCE: ${law.anchor}`,
-        `YOU ARE EDITING: ${law.anchor.split(":")[0]} — read the law before this edit lands`,
-        `VECTOR: ${vector}`,
+        `YOU ARE EDITING: ${anchorFile} — read the law before this edit lands`,
+        `VECTOR: ${vecStr}`,
       ],
       severity: SEVERITY.Error,
       source: "plutus/violation",
       total: 1,
     };
   }
-  if (v.kind === "DRIFT") {
+  if (effKind === "DRIFT" && v.kind === "DRIFT") {
+    // FIX (audit: the clause comes from the verdict) — a hardcoded P7 misattributes when the
+    // drift fired on a different clause or the vector lacks P7 (then "P7=n/a" is the tell).
+    const dc = v.weakest ?? "P7";
     return {
       shape: "DRIFT",
-      title: `DRIFT — this change contradicts a prior decision (P7=${pct(v.vector.P7)})`,
-      rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vector}`],
+      title: `DRIFT — this change contradicts a prior decision (${dc}=${pct(vector[dc as keyof typeof vector])})`,
+      rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vecStr}`],
       severity: SEVERITY.Warning,
       source: "plutus/drift",
       total: 1,
     };
   }
+  // FIX (audit: single SUSPECT shape) — INCONCLUSIVE already returns Hint above; this fallback
+  // is always Warning with the same "  " vector separator, so a consumer never sees one shape
+  // at two severities.
   return {
     shape: "SUSPECT",
-    title: `SUSPECT — ${law.name} may be breached (${v.weakest}=${pct(v.vector[v.weakest as keyof typeof v.vector])}); evidence required`,
-    rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vector}`],
+    title: `SUSPECT — ${law.name} may be breached (${v.weakest ?? "none"}=${pct(v.weakest ? vector[v.weakest as keyof typeof vector] : undefined)})${kindNote}; evidence required`,
+    rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vecStr}`],
     severity: SEVERITY.Warning,
     source: "plutus/suspect",
     total: 1,
@@ -162,23 +210,35 @@ export function verdictCard(v: Verdict, kept: JudgedLaw[]): FactCard | null {
 }
 
 /** CALLERS — the import-edge blast radius (the real read; a measured count). */
-export function callersCard(callers: string[]): FactCard | null {
-  if (callers.length === 0) return null;
+export function callersCard(callers: unknown): FactCard | null {
+  // FIX (audit: null/non-string guard) — exported callers can be null or contain non-strings;
+  // a .trim() on null throws and loses every card for the file.
+  if (!Array.isArray(callers) || callers.length === 0) return null;
+  const clean = callers.filter((c): c is string => typeof c === "string");
+  const shown = [...new Set(clean.map((c) => c.trim()).filter((c) => c.length > 0))];
+  // FIX (audit: deduped-empty is null) — [null,"  "] yielded rows=[] with total:0, violating
+  // the NEVER-empty-rows invariant. Silence, not an empty card.
+  if (shown.length === 0) return null;
+  const rows = shown.slice(0, 8).map((c) => `imported by ${c}`);
+  if (shown.length > 8) rows.push(`… and ${shown.length - 8} more`);
   return {
     shape: "CALLERS",
-    title: `this file — ${callers.length} importer${callers.length === 1 ? "" : "s"}`,
-    rows: callers.slice(0, 8).map((c) => `imported by ${c}`),
+    title: `this file — ${shown.length} importer${shown.length === 1 ? "" : "s"}`,
+    rows,
     severity: SEVERITY.Information,
     source: "plutus/callers",
-    total: callers.length,
+    total: shown.length,
   };
 }
 
 /** STALE — a named refusal (no graph, judge down). A loud card, never a silent pass. */
 export function staleCard(reason: string): FactCard {
+  // FIX (audit: STALE disambiguation) — same shape/source as the JUDGE_DOWN card above; the
+  // reason CODE in the title is the discriminator (PLUTUS_NO_* = the graph lane).
+  const code = reason.split(":")[0];
   return {
     shape: "STALE",
-    title: "the canon graph is unavailable",
+    title: `the canon graph is unavailable [${code}]`,
     rows: [`reason: ${reason}`],
     severity: SEVERITY.Warning,
     source: "plutus/stale",
@@ -186,17 +246,20 @@ export function staleCard(reason: string): FactCard {
   };
 }
 
-/** The full card set for one file: one card per governing law + the judged outcome + the callers. */
+/** The full card set for one file: one card per governing law + the judged outcome + the callers.
+ *  FIX (audit: honest signatures) — the body already tolerates null (it delegates to the
+ *  null-guarded lawCard/callersCard/verdictCard); the types now say so instead of lying. */
 export function fileCards(
-  kept: JudgedLaw[],
+  kept: JudgedLaw[] | null | undefined,
   totalCandidates: number,
-  v: Verdict | null,
-  callers: string[],
+  v: Verdict | null | undefined,
+  callers: string[] | null | undefined,
   judged: boolean,
+  targetFile?: string,
 ): FactCard[] {
   const out: FactCard[] = [];
-  out.push(...lawCard(kept, totalCandidates, judged));
-  const cc = callersCard(callers); if (cc) out.push(cc);
-  if (v) { const vc = verdictCard(v, kept); if (vc) out.push(vc); }
+  out.push(...lawCard(kept ?? [], totalCandidates, judged));
+  const cc = callersCard(callers ?? []); if (cc) out.push(cc);
+  if (v) { const vc = verdictCard(v, kept ?? [], targetFile); if (vc) out.push(vc); }
   return out;
 }

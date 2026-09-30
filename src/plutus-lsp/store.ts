@@ -13,15 +13,17 @@
  * The precedent: Graph_Intelligence/scripts/gi-lsp.ts (the GI reflex, 220 L).
  */
 
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { existsSync, statSync, openSync, fstatSync, readSync, closeSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { connect } from "node:net";
 import { homedir } from "node:os";
 
 // ── THE ROOT MARKERS (the spawn gate 2 — a project root must carry one) ──────
 // FIX (audit store.ts:22): the PROJECT-SPECIFIC markers first; the generic fallback is short-walk only
-export const ROOT_MARKERS = [".arsumbris", ".omp/graph-intelligence", "MASTER_CONTEXT", "tsconfig.json"];
-export const STRONG_MARKERS = [".arsumbris", ".omp/graph-intelligence", "MASTER_CONTEXT"];
+// FIX (audit: freeze the marker arrays) — a mutable export can be push/pop/spliced by any
+// importer, changing root discovery for the whole process.
+export const ROOT_MARKERS: readonly string[] = Object.freeze([".arsumbris", ".omp/graph-intelligence", "MASTER_CONTEXT", "tsconfig.json"]);
+export const STRONG_MARKERS: readonly string[] = Object.freeze([".arsumbris", ".omp/graph-intelligence", "MASTER_CONTEXT"]);
 
 // ── THE NAMED REFUSALS ───────────────────────────────────────────────────────
 export const PLUTUS_NO_STORE = "PLUTUS_NO_STORE";
@@ -31,8 +33,10 @@ export const JEVK5_DOWN = "JEVK5_DOWN";
 export const TIERS = ["IMMUTABLE", "EVOLVING", "SUPERSEDED"] as const;
 /** FIX (audit store.ts:96): a validated tier — an unknown value falls back to IMMUTABLE. */
 export function validTier(v: unknown): "IMMUTABLE" | "EVOLVING" | "SUPERSEDED" {
-  const t = String(v ?? "").toUpperCase();
-  return (TIERS as readonly string[]).includes(t) ? (t as "IMMUTABLE" | "EVOLVING" | "SUPERSEDED") : "IMMUTABLE";
+  // FIX (audit: fail CLOSED) — an unknown/missing tier used to promote to IMMUTABLE (+2 rank
+  // weight), so corrupt data outranked canon. Now SUPERSEDED (-2): malformed data sinks.
+  const t = String(v ?? "").trim().toUpperCase();
+  return (TIERS as readonly string[]).includes(t) ? (t as "IMMUTABLE" | "EVOLVING" | "SUPERSEDED") : "SUPERSEDED";
 }
 
 export interface LawEntity {
@@ -77,17 +81,55 @@ export function resolveRoot(startFile: string): string {
  *   3. THE KNOWN PLUTUS LOCATIONS (the wt tree + the MASTER_CONTEXT corpus) — so a Plutus
  *      session finds the canon without an env var.
  */
-export const KNOWN_L1_PATHS = [
+// FIX (audit: env-gated canon discovery) — the host-absolute fallbacks are OPT-IN ONLY.
+// Without PLUTUS_ALLOW_KNOWN_PATHS=1 they are NEVER consulted: a foreign corpus must not
+// silently become canon on another host. Portability comes from PLUTUS_L1_PATH + <root>/kg.json.
+// (The old `KNOWN_PATHS_ALLOWED` import-time const is gone — the gate reads the env at CALL
+// time in l1PathFor, so a mid-process export takes effect without a reload.)
+export const KNOWN_L1_PATHS: readonly string[] = Object.freeze([
   "/home/leviathan/.omp/wt/plutus-main-66dfa4c/PLUTUS/agent/.omp/graph-intelligence/layers/semantica/kg.json",
   "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json",
-];
+]);
 
+/** FIX (audit: the spec claimed L1+L2; the pipeline ran L1-only): the known-location L1
+ *  cache. The FIRST loadStore for a root records which kg.json actually resolved, so a
+ *  second read in the same process does not re-walk the discovery. Keyed by root. */
+// FIX (audit: L1_RESOLVED is private + invalidated) — an exported mutable Map can be
+// poisoned by any importer (`set`/`clear` serves a stale corpus as canon). The cache is now
+// module-private and keyed with mtime+size: an edited kg.json is re-read, never stale-served.
+const L1_RESOLVED = new Map<string, { path: string; mtimeMs: number; size: number }>();
 export function l1PathFor(root: string): string {
+  // the env override is AUTHORITATIVE on EVERY call (never cached — tests and sessions
+  // switch it; a cached override would serve a stale corpus as canon)
   const env = process.env.PLUTUS_L1_PATH;
-  if (env) return env;   // an explicit override is AUTHORITATIVE
+  if (env) return env;
+  // FIX (audit: local-first) — check the cwd's own kg.json BEFORE the cache, so a local
+  // corpus appearing after first load is never shadowed by a stale KNOWN entry.
   const local = join(root, ".omp", "graph-intelligence", "layers", "semantica", "kg.json");
-  if (existsSync(local)) return local;
-  for (const known of KNOWN_L1_PATHS) if (existsSync(known)) return known;   // FIX: the canon discovery
+  try {
+    const st = statSync(local);
+    if (st.isFile()) { L1_RESOLVED.set(root, { path: local, mtimeMs: st.mtimeMs, size: st.size }); return local; }
+  } catch { /* fall through */ }
+  const hit = L1_RESOLVED.get(root);
+  if (hit) {
+    try {
+      const st = statSync(hit.path);
+      if (st.mtimeMs === hit.mtimeMs && st.size === hit.size) return hit.path;
+    } catch { /* fall through and re-resolve */ }
+    L1_RESOLVED.delete(root);
+  }
+  try { if (statSync(local).isDirectory()) throw new Error(`${PLUTUS_NO_STORE}: ${local} is a directory, not kg.json`); } catch (e) { if ((e as Error).message.startsWith(PLUTUS_NO_STORE)) throw e; }
+  if (process.env.PLUTUS_ALLOW_KNOWN_PATHS === "1") {
+    // FIX (audit: knownAbs was UNDEFINED — ReferenceError when enabled). The entries are
+    // already absolute paths; resolve() normalizes without inventing a helper.
+    for (const rel of KNOWN_L1_PATHS) {
+      const known = resolve(rel);
+      try {
+        const st = statSync(known);
+        if (st.isFile()) { L1_RESOLVED.set(root, { path: known, mtimeMs: st.mtimeMs, size: st.size }); return known; }
+      } catch { /* not present on this host */ }
+    }
+  }   // FIX: the canon discovery
   return local;   // absent everywhere -> loadStore throws the NAMED PLUTUS_NO_STORE
 }
 
@@ -101,12 +143,27 @@ export function loadStore(startFile: string): Store {
   if (!existsSync(l1Path)) {
     throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} absent (root=${root})`);
   }
-  // FIX (audit store.ts:83): stat+read in ONE try — any fs error maps to the NAMED refusal
+  // FIX (audit: fd-based read, no stat/readFileSync TOCTOU) — open the fd, fstat it, read
+  // exactly the fstat'd size in ONE stream. A file that grows between check and read cannot
+  // OOM the server; a 16MB cap (the L2 16/32MB guards' sibling) fails closed. The override
+  // itself is validated: it must resolve to a .json path.
+  const MAX_L1_BYTES = 16 * 1024 * 1024;
+  const envPath = process.env.PLUTUS_L1_PATH;
+  if (envPath && !/\.json$/i.test(envPath.split("?")[0])) {
+    throw new Error(`${PLUTUS_NO_STORE}: PLUTUS_L1_PATH must be a .json path (got ${envPath.slice(0, 80)})`);
+  }
   let raw = "";
   try {
-    const st = statSync(l1Path);
-    if (st.size === 0) throw new Error("0 bytes");
-    raw = readFileSync(l1Path, "utf8");
+    const fd = openSync(l1Path, "r");
+    try {
+      const st = fstatSync(fd);
+      if (st.size === 0) throw new Error("0 bytes");
+      if (st.size > MAX_L1_BYTES) throw new Error(`${st.size} bytes exceeds the 16MB cap`);
+      const buf = Buffer.alloc(st.size);
+      let off = 0;
+      while (off < st.size) { const n = readSync(fd, buf, off, st.size - off, null); if (n <= 0) break; off += n; }
+      raw = buf.subarray(0, off).toString("utf8");
+    } finally { closeSync(fd); }
   } catch (e) {
     throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${(e as Error).message})`);
   }
@@ -123,14 +180,16 @@ export function loadStore(startFile: string): Store {
   }
   // FIX (audit store.ts:88): guard every entry's shape — a [null, 42] array must not crash
   const entities = (Array.isArray(doc.entities) ? doc.entities : []).filter(
-    (e): e is Record<string, unknown> => typeof e === "object" && e !== null,
+    (e): e is Record<string, unknown> => typeof e === "object" && e !== null && !Array.isArray(e),
   );
   // FIX (audit store.ts:100): the same shape guard as the entities
   const relationships = (Array.isArray(doc.relationships) ? doc.relationships : []).filter(
-    (r): r is Record<string, unknown> => typeof r === "object" && r !== null,
+    (r): r is Record<string, unknown> => typeof r === "object" && r !== null && !Array.isArray(r),
   );
+  // FIX (audit: empty-id laws collapse the id-keyed dedupe — every id:"" law but the first
+  // is silently dropped). Drop them at load with a loud reason instead of a silent merge.
   const laws: LawEntity[] = entities
-    .filter((e) => String(e.type ?? "") === "law")
+    .filter((e) => String(e.type ?? "") === "law" && String(e.id ?? "").trim().length > 0)
     .map((e) => ({
       id: String(e.id ?? ""),
       name: String(e.name ?? e.id ?? ""),
@@ -151,19 +210,31 @@ export function lawsFor(store: Store, needle: string): LawEntity[] {
   const n = needle.trim().toLowerCase();
   if (!n) return [];
   // FIX (audit store.ts:122): a word-boundary match + a trimmed needle (no whitespace phantom)
-  const re = new RegExp(`(^|[^a-z0-9])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
+  const re = wordRe(n);
   return store.laws.filter((l) => re.test(`${l.name} ${l.statement} ${l.id}`));
 }
 
 /** The declarations in a TS-ish file (the L1 detect input). */
 export function declarationsIn(source: string): string[] {
   const out = new Set<string>();
+  // FIX (audit: strip STRINGS first, then comments) — a `/*...*/` inside a string literal
+  // must not corrupt the code (the old order broke string boundaries and produced
+  // missed/phantom declarations). Order: template/string literals → block comments → line comments.
+  const code = source
+    .replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:"'A-Za-z0-9_$])\/\/[^\n]*/g, "$1 ");
   // FIX (audit store.ts:122): cover default/declare/abstract/var/enum + export {a,b}
   const re = /export\s+(?:default\s+)?(?:async\s+)?(?:declare\s+)?(?:abstract\s+)?(?:function\*?|const|let|var|class|interface|type|enum|namespace)\s+([A-Za-z_$][\w$]*)|export\s*\{([^}]+)\}/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(source)) !== null) {
+  while ((m = re.exec(code)) !== null) {
     if (m[1]) out.add(m[1]);
-    else if (m[2]) for (const part of m[2].split(",")) { const n = part.trim().split(/\s+as\s+/).pop()?.trim(); if (n && /^[A-Za-z_$][\w$]*$/.test(n)) out.add(n); }
+    // FIX (audit: keep BOTH names) — `export {a as b}` keeps `a` (the local binding) AND `b`
+    // (the public name); dropping `a` loses the detect needle for the implementation.
+    else if (m[2]) for (const part of m[2].split(",")) {
+      const bits = part.trim().split(/\s+as\s+/).map((x) => x.trim()).filter(Boolean);
+      for (const n of bits) if (n && n !== "default" && /^[A-Za-z_$][\w$]*$/.test(n)) out.add(n);
+    }   // FIX (audit): `as default` is not a needle
   }
   return [...out];
 }
@@ -173,6 +244,8 @@ export interface L2Result { ok: boolean; nodeCount?: number; edgeCount?: number;
 
 /** A single read over the au-engine unix socket. Never throws — returns the NAMED reason. */
 export async function readL2(socketPath: string, timeoutMs = 800): Promise<L2Result> {
+  // FIX (audit: validate timeoutMs) — 0/negative/NaN/Infinity yields an immediate or never-firing timer.
+  const ms = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 60000) : 800;
   if (!existsSync(socketPath)) return { ok: false, reason: `${PLUTUS_NO_STORE}: socket absent (${socketPath})` };
   return await new Promise<L2Result>((res) => {
     let sock: ReturnType<typeof connect>;
@@ -180,23 +253,39 @@ export async function readL2(socketPath: string, timeoutMs = 800): Promise<L2Res
       return res({ ok: false, reason: `L2_ERROR: ${(e as Error).message}` });   // FIX: a sync throw is NAMED
     }
     let done = false;
-    const finish = (r: L2Result) => { if (!done) { done = true; sock.destroy(); res(r); } };
-    const t = setTimeout(() => finish({ ok: false, reason: `L2_TIMEOUT (${timeoutMs}ms)` }), timeoutMs);
+    // FIX (audit: finish clears its own timer) — callers must not have to remember; a leaked
+    // 800ms timer per read is a slow resource bleed.
+    const finish = (r: L2Result) => { if (!done) { done = true; clearTimeout(t); sock.destroy(); res(r); } };
+    const t = setTimeout(() => finish({ ok: false, reason: `L2_TIMEOUT (${ms}ms)` }), ms);
     sock.on("connect", () => {
       const req = Buffer.from(JSON.stringify({ read: "overview" }));
       const len = Buffer.alloc(4); len.writeUInt32BE(req.length);
-      sock.write(Buffer.concat([len, req]));
+      // FIX (audit: write errors) — an unwritable socket must surface, never hang silently.
+      sock.write(Buffer.concat([len, req]), (err?: Error | null) => {
+        if (err) finish({ ok: false, reason: `L2_WRITE: ${err.message}` });
+      });
     });
+    // FIX (audit: incremental length tracking) — concat per chunk is O(n²) to the 32MB cap.
+    // Track the byte length; concat once per parse attempt.
+    // FIX (audit: single concat) — track the length; concat ONCE per parse attempt, not per chunk.
     const chunks: Buffer[] = [];
+    let total = 0;
     sock.on("data", (c) => {
-      chunks.push(c as Buffer);
-      const b = Buffer.concat(chunks);
+      const cb = c as Buffer;
+      chunks.push(cb);
+      total += cb.length;
+      if (total > 32 * 1024 * 1024) { finish({ ok: false, reason: `L2_OVERSIZE: ${total} bytes` }); return; }
+      const b = Buffer.concat(chunks, total);
+      if (b.length < 4) return;
+      const need = 4 + b.readUInt32BE(0);
+      if (need > 16 * 1024 * 1024 + 4) { finish({ ok: false, reason: `L2_FRAME_TOO_LARGE` }); return; }
+      if (total < need) return;
       // FIX (audit store.ts:172): a CUMULATIVE cap — a slow-loris cannot force an OOM
-      if (b.length > 32 * 1024 * 1024) { clearTimeout(t); finish({ ok: false, reason: `L2_OVERSIZE: ${b.length} bytes` }); return; }
+      if (b.length > 32 * 1024 * 1024) { finish({ ok: false, reason: `L2_OVERSIZE: ${b.length} bytes` }); return; }
       if (b.length < 4) return;
       const n = b.readUInt32BE(0);
       // FIX (audit store.ts:165): a bounded frame — a corrupt peer cannot force an OOM
-      if (n > 16 * 1024 * 1024) { clearTimeout(t); finish({ ok: false, reason: `L2_FRAME_TOO_LARGE: ${n} bytes` }); return; }
+      if (n > 16 * 1024 * 1024) { finish({ ok: false, reason: `L2_FRAME_TOO_LARGE: ${n} bytes` }); return; }
       if (b.length < 4 + n) return;
       clearTimeout(t);
       try {
@@ -209,10 +298,10 @@ export async function readL2(socketPath: string, timeoutMs = 800): Promise<L2Res
         } else finish({ ok: true, nodeCount: nc, edgeCount: ec });
       } catch (e) { finish({ ok: false, reason: `L2_PARSE: ${(e as Error).message}` }); }
     });
-    sock.on("error", (e) => { clearTimeout(t); finish({ ok: false, reason: `L2_ERROR: ${e.message}` }); });
+    sock.on("error", (e) => { finish({ ok: false, reason: `L2_ERROR: ${e.message}` }); });
     // FIX (audit store.ts:158): a connect-then-close or a short frame must RESOLVE, not hang
-    sock.on("close", () => { clearTimeout(t); finish({ ok: false, reason: "L2_CLOSED: the peer closed before a full frame" }); });
-    sock.on("end", () => { clearTimeout(t); finish({ ok: false, reason: "L2_ENDED: the peer ended the stream" }); });
+    sock.on("close", () => { finish({ ok: false, reason: "L2_CLOSED: the peer closed before a full frame" }); });
+    sock.on("end", () => { finish({ ok: false, reason: "L2_ENDED: the peer ended the stream" }); });
   });
 }
 
@@ -226,12 +315,26 @@ export function l2SocketFor(root: string): string {
 }
 
 /** The generic tokens that must NOT match (the over-match defect, found by the adversarial sweep). */
-export const STOPWORDS: ReadonlySet<string> = Object.freeze(new Set([
+// FIX (audit: STOPWORDS is module-private) — Object.freeze on a Set does NOT freeze contents;
+// add/delete/clear still mutate. The set is private; only the predicate is exported.
+const STOPWORDS = new Set([
   "file", "files", "the", "and", "for", "with", "from", "this", "that", "type", "types",
   "name", "names", "value", "values", "data", "code", "test", "tests", "main", "index",
   "util", "utils", "core", "base", "src", "lib", "spec", "docs", "readme", "package",
   "const", "export", "function", "class", "interface", "return", "true", "false", "null",
-])) as ReadonlySet<string>;   // FIX F13 (audit-bravo): FROZEN at runtime, not just typed readonly
+]);
+/** The stopword predicate — the ONLY access to the set (it cannot be poisoned). */
+export function isStopword(t: string): boolean { return STOPWORDS.has(t); }
+
+/** The canonical word-boundary matcher. ONE regex shape for lawsFor/lawsForFile/lawsForHunk —
+ *  previously each built its own inline `new RegExp`, inviting drift. Compile once per needle. */
+export function wordRe(needle: string): RegExp {
+  // FIX (audit: needle guard) — an empty needle matches almost everything; a multi-KB needle
+  // builds a multi-KB regex (ReDoS/CPU). Cap at 64 chars; empty never matches.
+  const n = needle.trim().slice(0, 64);
+  if (!n) return /(?!)/
+  return new RegExp(`(^|[^a-z0-9])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
+}
 
 /** Split an identifier into lowercase tokens (camelCase + snake_case), dropping the generic ones. */
 export function tokensOf(name: string): string[] {
@@ -239,7 +342,7 @@ export function tokensOf(name: string): string[] {
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .split(/[^A-Za-z0-9]+/)
     .map((t) => t.toLowerCase())
-    .filter((t) => t.length >= 4 && !STOPWORDS.has(t));
+    .filter((t) => t.length >= 4 && !isStopword(t));
 }
 
 /** The laws governing a FILE — the union of matches over the file's tokens + its declarations. */
@@ -249,12 +352,13 @@ export function lawsForFile(store: Store, filePath: string, decls: string[]): La
   const needles = new Set<string>([...tokensOf(base), ...decls.flatMap(tokensOf)]);
   const seen = new Set<string>();
   const out: LawEntity[] = [];
-  for (const n of needles) {
+  const compiled = [...needles].map((n) => wordRe(n));
+  for (let k = 0; k < compiled.length; k++) {
+    const re = compiled[k];
     for (const l of store.laws) {
       if (seen.has(l.id)) continue;
       // FIX (audit store.ts:190): a WORD-BOUNDARY match — 'iron' must not hit 'environment'
       const hay = `${l.name} ${l.statement} ${l.id}`.toLowerCase();
-      const re = new RegExp(`(^|[^a-z0-9])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
       if (re.test(hay)) { seen.add(l.id); out.push(l); }
     }
   }
@@ -281,17 +385,26 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
     const lt = tokensOf(`${l.name} ${l.tier} ${l.statement}`);
     if (lt.some((t) => hunkTokens.has(t))) return true;
     for (const part of String(l.name).split(/[-_\s]+/)) {
-      if (part.length >= 3 && new RegExp(`\\b${part.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\b`, "i").test(hunkLower)) return true;
+      if (part.length >= 3 && wordRe(part.toLowerCase()).test(hunkLower)) return true;
     }
     return false;
   });
+  // FIX (audit: single-pass candidates) — the old code unioned, then re-filtered, then
+  // re-tokenized the same strings 3x. One pass: dedupe + zero-overlap filter together.
   const seen = new Set<string>();
-  const candidates = [...byName, ...byHunk].filter((l) => (seen.has(l.id) ? false : (seen.add(l.id), true)));
-  if (candidates.length <= topK) return candidates;
-  const ht = new Set(tokensOf(hunk));
-  const scored = candidates.map((l) => {
-    const lt = tokensOf(`${l.name} ${l.tier} ${l.statement}`);
-    const overlap = lt.filter((t) => ht.has(t)).length;
+  const ranked = [...byName, ...byHunk].filter((l) => {
+    if (seen.has(l.id)) return false;
+    seen.add(l.id);
+    // FIX (audit: zero-overlap policy) — a small noisy set previously returned UNRANKED and
+    // UNFILTERED, contradicting the score>0 rule. Filter first, then topK.
+    return tokensOf(`${l.name} ${l.id} ${l.statement}`).some((t) => hunkTokens.has(t));
+  });
+  // FIX (audit: single-pass tokenization) — the hunk is tokenized ONCE; each law's token set
+  // is computed ONCE and reused for the overlap score below.
+  const lawToks = new Map(ranked.map((l) => [l.id, new Set(tokensOf(`${l.name} ${l.id} ${l.statement}`))] as const));
+  const scored = ranked.map((l) => {
+    const lt = lawToks.get(l.id) ?? new Set<string>();
+    const overlap = [...lt].filter((t) => hunkTokens.has(t)).length;
     // ★ THE VIOLATION-BIAS FIX (found by the derailment probe, 2026-09-30).
     //   The PREVIOUS ranking added `nums * 3` when the edit's NUMBER MATCHED the law's
     //   number. That made an edit which CONTRADICTS the constant (ZFP 45 -> 60) rank
@@ -303,7 +416,10 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
     return { l, score: overlap * 2 };
   });
   // FIX (audit store.ts:220): a ZERO-overlap law is not a candidate — return [] (no arbitrary pick)
-  return scored.filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, topK).map((x) => x.l);
+  // FIX (audit: tier-weighted ranking) — a SUPERSEDED law must never outrank canon on the
+  // same overlap: IMMUTABLE +2, EVOLVING +1, SUPERSEDED -2.
+  const w = (t: string) => (t === "IMMUTABLE" ? 2 : t === "EVOLVING" ? 1 : -2);
+  return scored.filter((x) => x.score > 0).sort((a, b) => (b.score + w(b.l.tier)) - (a.score + w(a.l.tier))).slice(0, topK).map((x) => x.l);
 }
 
 /**
@@ -312,11 +428,13 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
  * every file whose `imports` edge targets this file.
  */
 export function callersOf(store: Store, filePath: string): string[] {
+  // FIX (audit: exact, case-PRESERVED matching) — lowercasing both sides conflated distinct
+  // files on case-sensitive filesystems; backslashes never matched. Empty sources dropped.
   const base = (filePath.split(/[\\/]/).pop() ?? "");
   if (!base) return [];
   const hits = store.relationships.filter((r) => {
-    const t = String(r.target ?? "");
-    return r.type === "imports" && (t === base || t.endsWith(`/${base}`) || t.includes(base));
+    const t = String(r.target ?? "").replace(/\\/g, "/");
+    return r.type === "imports" && (t === base || t.endsWith(`/${base}`));
   });
-  return [...new Set(hits.map((r) => String(r.source ?? "")))].slice(0, 20);
+  return [...new Set(hits.map((r) => String(r.source ?? "")).filter((x) => x.trim().length > 0))].slice(0, 20);
 }

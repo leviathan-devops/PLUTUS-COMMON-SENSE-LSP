@@ -121,7 +121,7 @@ test("A12_the_relevance_kernel_is_wired (not lexical-only)", async () => {
   expect(server).toContain("lawsForHunk(store, file, decls, hunk, 12)");   // the wide net
   expect(judge).toContain("export async function relevancePass");
   // the bar is DERIVED (documented), not a bare literal
-  expect(judge).toContain("PLUTUS_RELEVANCE_T ?? 0.3");
+  expect(judge).toContain("PLUTUS_RELEVANCE_T, 0.3");
 });
 
 test("A13_the_relevance_bar_is_derived (0.30, not the assumed 0.50)", async () => {
@@ -142,4 +142,9 @@ test("A14_relevance_partitions_on_the_bar", async () => {
   // an UNREADABLE answer (-1) is never shown
   const unknown = partitionByRelevance(laws, [{ index: 0, lawId: "law::A", p: -1 }, { index: 1, lawId: "law::B", p: -1 }]);
   expect(unknown.relevant.length).toBe(0);
+  // a STALE row (a lawId that is not a candidate) is never assigned — it is dropped, not mis-partitioned
+  const stale = partitionByRelevance(laws, [{ index: 9, lawId: "law::GHOST", p: 0.99 }]);
+  expect(stale.relevant.length).toBe(0);
+  expect(stale.rejected.length).toBe(0);
+  expect(stale.unknown.length).toBe(0);
 });
