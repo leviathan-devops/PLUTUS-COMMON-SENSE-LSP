@@ -97,3 +97,26 @@ the P1 over-block (jurisdiction from the LAWS, not the path); the test isolation
 checkpoint's copied suite); the env restore ("undefined").
 
 **THE VERDICT: PASS (6/6) — the live reflex chain proven in a CLEAN container.**
+
+## THE ROUND-10/11 VERIFICATION (2026-09-30 · commit 816b384)
+
+**THE BATTERY:** `bun test tests/` → **26 pass / 0 fail / 117 expects** (up from 18 — the audit
+rounds added the relevance-partition, stale-row, and selftest-token tests).
+
+**THE LIVE SELFTESTS ×4 (the real graph + the LIVE JevK5 at 127.0.0.1:8090, model
+jevk5-4b-v0.2-Q8_0):**
+| the target | the result | the shape census |
+|---|---|---|
+| `src/plutus-lsp/store.ts` | SELFTEST OK, exit 0 | 11 cards: 10 LAW + 1 SUSPECT (`CONST-FROZEN-PAIR P6=0.731`) |
+| `src/plutus-lsp/judge.ts` | SELFTEST OK, exit 0 | 13 cards: 12 LAW + 1 SUSPECT |
+| `scripts/plutus-lsp.ts` | SELFTEST OK, exit 0 | 12 cards: 11 LAW + 1 SUSPECT (`MECH-CIRCUIT P6=0.526`) |
+| `src/plutus-lsp/cards.ts` | SELFTEST OK, exit 0 | 13 cards: 12 LAW + 1 **VIOLATION** (`MECH-TOKEN-08 P6=0.868`, `YOU ARE EDITING: src/plutus-lsp/cards.ts` — the target-file threading proven) |
+
+**THE BUILT BUNDLE:** `dist/plutus-lsp.js` 41,046 bytes · sha256
+`51f95e841cf6247fd68adaaccac74e8991eb10199d527a9530d01f67c23b477f` (rebuilt + committed).
+
+**THE AUDIT GATE:** round-9 FAIL (0 critical, 12 high) → round-10 FAIL (2 critical, 10 high) →
+round-11 **BLOCKED** (provider unreachable: `127.0.0.1:4097` refused — the go-session-proxy lane
+is down; the JEVK5 judge at :8090 is UP). **BLOCKED is reported as BLOCKED — never as PASS.**
+All 21 round-9/10 blocking findings were fixed first (BUILD_REPORT §7); the gate simply could
+not re-run. The 7 remaining round-10 medium/low notes are recorded in BUILD_REPORT §7's residual.

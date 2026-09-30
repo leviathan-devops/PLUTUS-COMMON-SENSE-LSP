@@ -20,3 +20,18 @@ write channels.
 
 ## THE HONEST COUNT
 3 derailments; all 3 remedied with a named mechanism; none required a retry-as-erasure.
+
+## F-04 · the audit-lane outage misread as a verdict (a measurement failure, caught)
+WHAT: the round-11 audit returned BLOCKED (provider `127.0.0.1:4097` refused) twice in a row.
+THE MECHANISM: the ocr lane rides the go-session-proxy; the proxy process is alive but its
+:4097 listener is gone — the lane is down while the JEVK5 judge (:8090) is UP. THE REMEDY: report
+BLOCKED-as-BLOCKED, fix-then-verify locally (battery + 4 live selftests + rebuilt bundle), and
+re-run the gate when the lane recovers — never treat the absence of a FAIL as a PASS. THE LESSON:
+a gate that cannot run has said nothing; "no new findings" from a dead lane is not "clean".
+
+## F-05 · the stream-interruption mid-batch (an infra failure, recovered)
+WHAT: a provider stream cut killed a multi-edit batch halfway (the L2-framing + tokenization +
+dead-line fixes). THE MECHANISM: one giant heredoc = one failure domain. THE REMEDY: re-ran as
+three small asserted batches (each `assert old in s` before replace), re-verified with the
+battery after each. THE LESSON: small asserted batches survive interruptions; giant ones do not.
+THE HONEST COUNT: 5 derailments; all 5 remedied with a named mechanism.
