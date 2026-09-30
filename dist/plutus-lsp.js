@@ -251,15 +251,28 @@ function lawsForFile(store, filePath, decls) {
   return out;
 }
 function lawsForHunk(store, filePath, decls, hunk, topK = 3) {
-  const candidates = lawsForFile(store, filePath, decls);
+  const byName = lawsForFile(store, filePath, decls);
+  const hunkTokens = new Set(tokensOf(hunk));
+  const hunkLower = hunk.toLowerCase();
+  const byHunk = store.laws.filter((l) => {
+    const lt = tokensOf(`${l.name} ${l.tier} ${l.statement}`);
+    if (lt.some((t) => hunkTokens.has(t)))
+      return true;
+    for (const part of String(l.name).split(/[-_\s]+/)) {
+      if (part.length >= 3 && new RegExp(`\\b${part.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\b`, "i").test(hunkLower))
+        return true;
+    }
+    return false;
+  });
+  const seen = new Set;
+  const candidates = [...byName, ...byHunk].filter((l) => seen.has(l.id) ? false : (seen.add(l.id), true));
   if (candidates.length <= topK)
     return candidates;
   const ht = new Set(tokensOf(hunk));
   const scored = candidates.map((l) => {
-    const lt = tokensOf(`${l.name} ${l.statement}`);
+    const lt = tokensOf(`${l.name} ${l.tier} ${l.statement}`);
     const overlap = lt.filter((t) => ht.has(t)).length;
-    const nums = (hunk.match(/\d+(?:\.\d+)?/g) ?? []).filter((n) => l.statement.includes(n)).length;
-    return { l, score: overlap * 2 + nums * 3 };
+    return { l, score: overlap * 2 };
   });
   return scored.filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, topK).map((x) => x.l);
 }
@@ -381,17 +394,17 @@ function verdict(v) {
   if (answered.length === 0)
     return { kind: "INCONCLUSIVE", weakest: null, vector: a };
   const wrong = answered.map((id) => a[id]);
-  const minWrong = Math.min(...wrong);
-  const weakest = answered[wrong.indexOf(minWrong)] ?? null;
+  const maxWrong = Math.max(...wrong);
+  const strongest = answered[wrong.indexOf(maxWrong)] ?? null;
   const p7 = a.P7;
   const immutable = a.P3 !== undefined && a.P3 >= DEMAND_T;
   const throwBar = immutable ? THROW_T * 0.9 : THROW_T;
-  if (minWrong >= throwBar)
-    return { kind: "VIOLATION", weakest, vector: a };
+  if (maxWrong >= throwBar)
+    return { kind: "VIOLATION", weakest: strongest, vector: a };
   if (p7 !== undefined && p7 >= THROW_T)
     return { kind: "DRIFT", weakest: "P7", vector: a };
-  if (minWrong >= DEMAND_T)
-    return { kind: "SUSPECT", weakest, vector: a };
+  if (maxWrong >= DEMAND_T)
+    return { kind: "SUSPECT", weakest: strongest, vector: a };
   return { kind: "LAW", weakest: null, vector: a };
 }
 var OBSERVABLE = [
@@ -431,7 +444,7 @@ function observableQuestion(laws) {
   return best?.q ?? CHAIN.P4.q;
 }
 var RELEVANCE_T = bar(process.env.PLUTUS_RELEVANCE_T ?? 0.3);
-async function relevancePass(laws, filePath, hunk, timeoutMs = 6000) {
+async function relevancePass(laws, filePath, hunk, timeoutMs = 20000) {
   if (laws.length === 0)
     return { ok: true, scored: [], requests: 0 };
   const h = await health();
@@ -452,7 +465,7 @@ async function relevancePass(laws, filePath, hunk, timeoutMs = 6000) {
   laws.forEach((_, i) => {
     questions[`R${i + 1}`] = {
       type: "noul",
-      instructions: `Candidate ${i + 1}: does THIS law govern the code being written in ${subject}? ` + `A law governs only if the code's subject matter is the same thing the law is about ` + `(the same quantity, rule, or domain). Answer no if the law's subject is unrelated ` + `to what this file's hunk actually touches.`
+      instructions: `Candidate ${i + 1}: does THIS law govern the code being written in ${subject}? ` + `A law governs if the hunk touches the SAME QUANTITY, RULE OR DOMAIN the law is about. ` + `\u2605 A DIFFERENT VALUE IS STILL GOVERNED \u2014 if the law fixes a constant or a rule and the ` + `hunk sets a different value for that same thing, the law governs THAT MOST: a ` + `disagreement is the case you must catch. Answer no ONLY when the law's subject is a ` + `different subject entirely (a stop-loss law vs a colour-palette edit).`
     };
   });
   try {

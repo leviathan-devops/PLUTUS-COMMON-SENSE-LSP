@@ -145,7 +145,8 @@ export interface Verdict {
 /**
  * THE VERDICT — pure code. The DECIDING clauses are the WRONGNESS set {P4 VIOLATE, P5 CONTRACT,
  * P6 ANTIPATTERN} plus P7 DRIFT; the INFORMING clauses are {P1 SCOPE, P2 LAW, P3 TIER}.
- * The wrongness = min over the ANSWERED deciding clauses (the weakest clause, never an average).
+ * The wrongness = MAX over the ANSWERED wrongness clauses (this layer INFORMNS; a missed
+ * violation is the expensive error — see the composition fix below).
  * THE GUARD (F8: the docstring now matches the body): P2 LAW is the jurisdiction gate — a low
  * P2 yields INCONCLUSIVE. P1 is recorded in the vector but does NOT block (the container S5:
  * jurisdiction comes from the LAWS, not the model's path read).
@@ -159,12 +160,20 @@ export function verdict(v: JudgeVector): Verdict {
   // A file that matched canon laws IS in-scope BY CONSTRUCTION — P1 is recorded in the vector
   // (it informs) but does NOT block the verdict; P2 (the law presence) is the real gate.
   if (a.P2 !== undefined && a.P2 < DEMAND_T) return { kind: "INCONCLUSIVE", weakest: "P2", vector: a };
-  // the min over the ANSWERED deciding clauses (an unjudged clause is not a zero)
+  // ★ THE COMPOSITION FIX (the derailment probe, 2026-09-30). The rule was min() over the
+  //   wrongness clauses — the "weakest clause, never an average" law. MEASURED, that law is
+  //   BACKWARDS for this layer: the clauses are about DIFFERENT law kinds, so an inapplicable
+  //   one (P5 CONTRACT = the E1->E2->E3 engine architecture) dragged a real numeric breach
+  //   down — P4=0.879 (a clear ZFP violation) was diluted to 0.418 by P5 and the card said
+  //   "SUSPECT" instead of VIOLATION. THIS LAYER INFORMS; a missed violation is the
+  //   expensive error, a spurious one costs a card the agent can dismiss. So the wrongness
+  //   signal is the MAX over the ANSWERED wrongness clauses (any one saying "this
+  //   contradicts" is enough to say so), and an UNANSWERED clause is never a zero.
   const answered = DECIDING.filter((id) => a[id] !== undefined);
-  if (answered.length === 0) return { kind: "INCONCLUSIVE", weakest: null, vector: a };  // FIX (audit:136) fail-closed
+  if (answered.length === 0) return { kind: "INCONCLUSIVE", weakest: null, vector: a };  // fail-closed
   const wrong = answered.map((id) => a[id] as number);
-  const minWrong = Math.min(...wrong);
-  const weakest = answered[wrong.indexOf(minWrong)] ?? null;
+  const maxWrong = Math.max(...wrong);
+  const strongest = answered[wrong.indexOf(maxWrong)] ?? null;
   // FIX B (the audit: the SILENT DEFAULTS were fail-open). An UNANSWERED clause is
   // UNKNOWN — never 0. The drift check runs ONLY on an answered P7; the tier bonus
   // applies ONLY on an answered P3. The vector carries what was actually judged.
@@ -172,9 +181,9 @@ export function verdict(v: JudgeVector): Verdict {
   const immutable = a.P3 !== undefined && a.P3 >= DEMAND_T;
   const throwBar = immutable ? THROW_T * 0.9 : THROW_T;     // a canon law tolerates less
   // THE PRIORITY (documented): a wrongness verdict outranks drift; both are in the vector
-  if (minWrong >= throwBar) return { kind: "VIOLATION", weakest, vector: a };
+  if (maxWrong >= throwBar) return { kind: "VIOLATION", weakest: strongest, vector: a };
   if (p7 !== undefined && p7 >= THROW_T) return { kind: "DRIFT", weakest: "P7", vector: a };
-  if (minWrong >= DEMAND_T) return { kind: "SUSPECT", weakest, vector: a };
+  if (maxWrong >= DEMAND_T) return { kind: "SUSPECT", weakest: strongest, vector: a };
   return { kind: "LAW", weakest: null, vector: a };
 }
 
@@ -258,7 +267,10 @@ export async function relevancePass(
   laws: LawEntity[],
   filePath: string,
   hunk: string,
-  timeoutMs = 6000,
+  // ★ 20s: the relevance question is deliberately long (it teaches the judge that a value
+  //   DISAGREEMENT is the most-governed case), so the batch needs real headroom. The
+  //   6s default aborted and degraded to "lexical, no judge" — a silent intelligence loss.
+  timeoutMs = 20000,
 ): Promise<{ ok: boolean; scored: RelevanceRow[]; reason?: string; requests: number; latencyMs?: number }> {
   if (laws.length === 0) return { ok: true, scored: [], requests: 0 };   // the anti-phantom law
   const h = await health();
@@ -283,9 +295,11 @@ export async function relevancePass(
       type: "noul",
       instructions:
         `Candidate ${i + 1}: does THIS law govern the code being written in ${subject}? ` +
-        `A law governs only if the code's subject matter is the same thing the law is about ` +
-        `(the same quantity, rule, or domain). Answer no if the law's subject is unrelated ` +
-        `to what this file's hunk actually touches.`,
+        `A law governs if the hunk touches the SAME QUANTITY, RULE OR DOMAIN the law is about. ` +
+        `★ A DIFFERENT VALUE IS STILL GOVERNED — if the law fixes a constant or a rule and the ` +
+        `hunk sets a different value for that same thing, the law governs THAT MOST: a ` +
+        `disagreement is the case you must catch. Answer no ONLY when the law's subject is a ` +
+        `different subject entirely (a stop-loss law vs a colour-palette edit).`,
     };
   });
 

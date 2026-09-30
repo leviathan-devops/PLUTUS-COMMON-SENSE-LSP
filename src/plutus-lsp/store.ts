@@ -267,15 +267,40 @@ export function lawsForFile(store: Store, filePath: string, decls: string[]): La
  * keep the top K. The L1 detect must be PRECISE, not broad.
  */
 export function lawsForHunk(store: Store, filePath: string, decls: string[], hunk: string, topK = 3): LawEntity[] {
-  const candidates = lawsForFile(store, filePath, decls);
+  // ★ THE CANDIDATE-NET FIX (the derailment probe, 2026-09-30): the net was built from the
+  //   DECLARATION NAMES only, so a law about a construct that lives in the hunk's BODY was
+  //   never a candidate — `const TPs = { tp1, tp2, tp3 }` (breaking ONE-TP) produced NOTHING,
+  //   because the name "TPs" yields no token >= 4 chars. THE NET MUST INCLUDE THE HUNK.
+  const byName = lawsForFile(store, filePath, decls);
+  const hunkTokens = new Set(tokensOf(hunk));
+  // ★ SHORT-TERM FIX: "TP1"/"TP2"/"ZS10" are 3-char DOMAIN terms. tokensOf drops <4 chars, so
+  //   the ONE-TP law ("no TP1, TP2, TP3") was never a candidate for `{ tp1, tp2, tp3 }` — a real
+  //   law invisible to the detector. The law's NAME is ALSO matched as a whole word in the hunk.
+  const hunkLower = hunk.toLowerCase();
+  const byHunk: LawEntity[] = store.laws.filter((l) => {
+    const lt = tokensOf(`${l.name} ${l.tier} ${l.statement}`);
+    if (lt.some((t) => hunkTokens.has(t))) return true;
+    for (const part of String(l.name).split(/[-_\s]+/)) {
+      if (part.length >= 3 && new RegExp(`\\b${part.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\b`, "i").test(hunkLower)) return true;
+    }
+    return false;
+  });
+  const seen = new Set<string>();
+  const candidates = [...byName, ...byHunk].filter((l) => (seen.has(l.id) ? false : (seen.add(l.id), true)));
   if (candidates.length <= topK) return candidates;
   const ht = new Set(tokensOf(hunk));
   const scored = candidates.map((l) => {
-    const lt = tokensOf(`${l.name} ${l.statement}`);
+    const lt = tokensOf(`${l.name} ${l.tier} ${l.statement}`);
     const overlap = lt.filter((t) => ht.has(t)).length;
-    // also reward an exact numeric mention (a law about 36 pips vs a hunk with 36)
-    const nums = (hunk.match(/\d+(?:\.\d+)?/g) ?? []).filter((n) => l.statement.includes(n)).length;
-    return { l, score: overlap * 2 + nums * 3 };
+    // ★ THE VIOLATION-BIAS FIX (found by the derailment probe, 2026-09-30).
+    //   The PREVIOUS ranking added `nums * 3` when the edit's NUMBER MATCHED the law's
+    //   number. That made an edit which CONTRADICTS the constant (ZFP 45 -> 60) rank
+    //   LOWER, so the violation never became a candidate and the judge never saw it:
+    //       the stupid action (ZFP=60) produced NO card
+    //       the correct action (ZFP=45) produced a card
+    //   The detector must be SUBJECT-MATCH ONLY. Whether the number AGREES is the
+    //   JUDGE's question (P4 VIOLATE), never the detector's.
+    return { l, score: overlap * 2 };
   });
   // FIX (audit store.ts:220): a ZERO-overlap law is not a candidate — return [] (no arbitrary pick)
   return scored.filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, topK).map((x) => x.l);
