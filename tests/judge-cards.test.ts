@@ -4,7 +4,7 @@
  */
 import { test, expect } from "bun:test";
 import { chain, verdict, buildState, health, JEVK5_DOWN, THROW_T, DEMAND_T } from "../src/plutus-lsp/judge.ts";
-import { fileCards, lawCard, verdictCard, tierCard, toDiagnostic, PLUTUS_LSP_TOKENS } from "../src/plutus-lsp/cards.ts";
+import { fileCards, lawCard, verdictCard, callersCard, PLUTUS_LSP_TOKENS, type JudgedLaw } from "../src/plutus-lsp/cards.ts";
 import type { LawEntity } from "../src/plutus-lsp/store.ts";
 
 const LAW: LawEntity = { id: "law::IRON-01", name: "IRON-01", statement: "ZFP threshold = 45 -- the tipping point", tier: "IMMUTABLE", anchor: "bible40:2997", source: "MASTER_CONTEXT" };
@@ -32,26 +32,43 @@ test("test_judge_down_is_named", async () => {
   expect(h.reason).toContain(JEVK5_DOWN);             // the NAMED refusal, never a fabricated noul
 });
 
-test("test_cards_seven_tokens", () => {
+test("test_cards_one_per_governing_law", () => {
   expect(PLUTUS_LSP_TOKENS.length).toBe(7);
   expect(new Set(PLUTUS_LSP_TOKENS).size).toBe(7);    // no duplicates
-  const cards = fileCards("mirror.ts", [LAW], { kind: "VIOLATION", weakest: "P4", vector: { P4: 0.91 } });
-  expect(cards.length).toBeGreaterThan(0);
+  // ONE CARD PER LAW (the design fix) — the card names the subject
+  const kept: JudgedLaw[] = [{ law: LAW, p: 0.82 }];
+  const laws = lawCard(kept, 9, true);                 // 9 candidates raised, 1 kept
+  expect(laws.length).toBe(1);
+  expect(laws[0]!.title).toContain("IRON-01");          // the title NAMES the law
+  expect(laws[0]!.title).toContain("relevance 0.82");  // the judge's own number
+  expect(laws[0]!.title).toContain("kept 1 of 9");     // the kernel's precision
+  expect(laws[0]!.rows.join(" ")).toContain("bible40:2997");  // the file:line
+  // a card with no measured law → NO card
+  expect(lawCard([], 0, true).length).toBe(0);
+});
+
+test("test_verdict_card_names_the_breaching_law", () => {
+  const kept: JudgedLaw[] = [{ law: LAW, p: 0.9 }];
+  const cards = fileCards(kept, 1, { kind: "VIOLATION", weakest: "P4", vector: { P4: 0.91 } }, [], true);
   const vc = cards.find((c) => c.shape === "VIOLATION");
   expect(vc).toBeDefined();
-  expect(vc!.severity).toBe(1);                        // Error
+  expect(vc!.title).toContain("IRON-01");                // the breaching law is NAMED
+  expect(vc!.severity).toBe(1);                          // Error
   expect(vc!.source).toBe("plutus/violation");
-  expect(vc!.rows.length).toBeGreaterThan(0);          // real evidence rows
-  const d = toDiagnostic(vc!);
-  expect(d.source).toBe("plutus/violation");
-  expect(d.message).toContain("VIOLATION");
+  expect(vc!.rows.join(" ")).toContain("P4=0.910");     // the whole vector
+});
+
+test("test_callers_card_is_a_measured_count", () => {
+  const c = callersCard(["a.ts", "b.ts", "c.ts"]);
+  expect(c!.total).toBe(3);
+  expect(c!.rows.length).toBe(3);
+  expect(callersCard([])).toBeNull();                    // silence, never a phantom
 });
 
 test("test_negative_no_phantom", () => {
-  expect(lawCard("x.ts", [])).toBeNull();              // no laws → NO card
-  expect(tierCard([])).toBeNull();
-  expect(verdictCard("x.ts", { kind: "LAW", weakest: null, vector: {} }, [LAW])).toBeNull();  // LAW is silent (the law card informs)
-  expect(fileCards("x.ts", [], null).length).toBe(0);  // a fact-free file yields NOTHING
+  expect(lawCard([], 0, true).length).toBe(0);        // no measured law → NO card
+  expect(verdictCard({ kind: "LAW", weakest: null, vector: {} }, [{ law: LAW, p: 0.9 }])).toBeNull();
+  expect(fileCards([], 0, null, [], true).length).toBe(0);  // a fact-free file yields NOTHING
 });
 
 test("test_verdict_thresholds", () => {

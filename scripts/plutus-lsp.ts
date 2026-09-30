@@ -14,12 +14,26 @@
 import { readFileSync, appendFileSync } from "node:fs";
 import { loadStore, lawsForHunk, declarationsIn, callersOf, readL2, l2SocketFor } from "../src/plutus-lsp/store.ts";
 import { chain, verdict, buildState, observableQuestion, relevancePass, partitionByRelevance, RELEVANCE_T } from "../src/plutus-lsp/judge.ts";
-import { fileCards, toDiagnostic, staleCard, PLUTUS_LSP_TOKENS } from "../src/plutus-lsp/cards.ts";
+import { fileCards, staleCard, PLUTUS_LSP_TOKENS, type FactCard } from "../src/plutus-lsp/cards.ts";
 
 // FIX F4 (audit-alpha): the receipt MUST be durable — /tmp is ephemeral and the spawn
 // proof was irreproducible. Default: the repo's forensic/ dir (an env override allowed).
 const RECEIPT = process.env.PLUTUS_LSP_RECEIPT ?? "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/forensic/lsp-receipts.log";
 // FIX F11 (audit-bravo): a bare catch{} swallows the failure. The receipt failure goes to stderr.
+/** ★ A card → an LSP Diagnostic. Mirrors gi-lsp.ts EXACTLY: `code` = the card shape (so a
+ *  consumer filters on it), the title on line 1, the evidence rows indented beneath. */
+function toDiagnostic(card: FactCard, src: string): Record<string, unknown> {
+  const firstLine = 0;
+  const col = src.split("\n")[firstLine]?.length ?? 0;
+  return {
+    range: { start: { line: firstLine, character: 0 }, end: { line: firstLine, character: col } },
+    severity: card.severity,
+    source: card.source,
+    code: card.shape,
+    message: `${card.title}\n${card.rows.map((r) => "  " + r).join("\n")}`,
+  };
+}
+
 const receipt = (line: string) => { try { appendFileSync(RECEIPT, `${new Date().toISOString()} ${clean(line)}\n`); } catch (e) { try { process.stderr.write(`RECEIPT_WRITE_FAIL: ${(e as Error).message}\n`); } catch {} } };
 
 const LOG = process.env.PLUTUS_LSP_LOG ?? "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/forensic/lsp-stderr.log";
@@ -63,12 +77,14 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   // L2 · THE RELEVANCE PASS — THE JEV KERNEL DECIDES WHAT GOVERNS (before any violation talk)
   let all = candidates;
   let relevance: Array<{ lawId: string; p: number }> = [];
+  let judgedLaws: import("../src/plutus-lsp/cards.ts").JudgedLaw[] = [];
   if (useJudge && candidates.length > 0) {
     const rel = await relevancePass(candidates, file, hunk);
     if (rel.ok) {
       const part = partitionByRelevance(candidates, rel.scored);
       all = part.relevant;
       relevance = rel.scored.map((r) => ({ lawId: r.lawId, p: r.p }));
+      judgedLaws = part.relevant.map((law) => ({ law, p: rel.scored.find((r) => r.index === candidates.indexOf(law))?.p ?? -1 }));
       receipt(`RELEVANCE ok=${rel.scored.filter((r) => r.p >= RELEVANCE_T).length}/${rel.scored.length} ` +
         `${part.rejected.map((x) => `${x.law.name}@${x.p.toFixed(2)}`).join(",") || "(none rejected)"}`);
       // the judge's verdict IS the filter: if NOTHING is relevant, emit nothing (no noise)
@@ -77,10 +93,12 @@ export async function pipeline(file: string, source: string, useJudge = true): P
       // fail-CLOSED on noise, fail-OPEN on coverage: if the judge is down we do NOT spray the
       // unfiltered net — we keep the lexical top-3 and MARK the degraded mode.
       all = candidates.slice(0, 3);
+      judgedLaws = all.map((law) => ({ law, p: -1 }));   // the lexical fallback, marked unread
       receipt(`RELEVANCE degraded=${rel.reason}`);
     }
   } else if (candidates.length > 0) {
     all = candidates.slice(0, 3);   // the --no-judge path (the unit tests): lexical only
+    judgedLaws = all.map((law) => ({ law, p: -1 }));
   }
 
   if (useJudge) {
@@ -90,7 +108,7 @@ export async function pipeline(file: string, source: string, useJudge = true): P
     v = verdict(res);
     vector = Object.fromEntries(Object.entries(res.answers).map(([k, n]) => [k, Number(n)]));
   }
-  const cards = fileCards(file, all, v, callersOf(store, file));   // FIX F4: the callers read
+  const cards = fileCards(judgedLaws, candidates.length, v, callersOf(store, file), useJudge && relevance.length > 0);   // FIX F4: the callers read
   const tokens = [...new Set(cards.map((c) => c.source))];
   receipt(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
   return { tokens, cards, refused: null, vector, relevance };
@@ -139,7 +157,7 @@ if (process.argv.includes("--stdio")) {
     try {   // FIX (audit:80): no unhandled rejection — a failure publishes [] and logs the reason
       const r = await pipeline(file, src, true);
       if (seq.get(uri) !== my) { log(`STALE_DROP ${file} (seq ${my} < ${seq.get(uri)})`); return; }   // FIX (audit:133)
-      const diags = r.refused ? [] : r.cards.map((c) => toDiagnostic(c, c.range));
+      const diags = r.refused ? [] : r.cards.map((c) => toDiagnostic(c, src));
       send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: diags } });
     } catch (e) {
       log(`ANALYZE_FAIL ${file}: ${(e as Error).message}`);

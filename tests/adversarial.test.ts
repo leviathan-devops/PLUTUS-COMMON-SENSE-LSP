@@ -6,7 +6,7 @@ import { test, expect } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { loadStore, lawsForFile, declarationsIn, PLUTUS_NO_STORE, PLUTUS_NO_ROOT } from "../src/plutus-lsp/store.ts";
 import { chain, health, verdict, buildState, JEVK5_DOWN } from "../src/plutus-lsp/judge.ts";
-import { fileCards, lawCard, toDiagnostic, PLUTUS_LSP_TOKENS, callersCard } from "../src/plutus-lsp/cards.ts";
+import { fileCards, lawCard, PLUTUS_LSP_TOKENS, callersCard, verdictCard } from "../src/plutus-lsp/cards.ts";
 
 const L1 = "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json";
 
@@ -33,8 +33,8 @@ test("A3_a_fact_free_file_yields_NO_card", () => {
   // a name whose tokens are ALL generic/too-short → NO needles → NO laws (the anti-phantom law)
   const laws = lawsForFile(s, "xq.ts", []);
   expect(laws.length).toBe(0);        // no phantom
-  expect(lawCard("xq.ts", laws)).toBeNull();
-  expect(fileCards("xq.ts", laws, null).length).toBe(0);
+  expect(lawCard([], laws.length, true).length).toBe(0);
+  expect(fileCards([], laws.length, null, [], true).length).toBe(0);
 });
 
 test("A4_a_known_violation_renders_the_VIOLATION_token", () => {
@@ -43,11 +43,11 @@ test("A4_a_known_violation_renders_the_VIOLATION_token", () => {
   // crossing), then the renderer. Both halves now.
   const v = verdict({ ok: true, answers: { P4: 0.91 }, requests: 1 });   // the real decision
   expect(v.kind).toBe("VIOLATION");                                      // the threshold crossed
-  const card = fileCards("mirror.ts", [{ id: "law::IRON-01", name: "IRON-01", statement: "SL cap 150 pips", tier: "IMMUTABLE", anchor: "b:1", source: "MC" }], v).find((c) => c.shape === "VIOLATION");
+  const card = verdictCard(v, [{ law: { id: "law::IRON-01", name: "IRON-01", statement: "SL cap 150 pips", tier: "IMMUTABLE", anchor: "b:1", source: "MC" }, p: 0.9 }]);
   expect(card).toBeDefined();
   expect(card!.source).toBe("plutus/violation");
   expect(card!.severity).toBe(1);
-  expect(toDiagnostic(card!).message).toContain("VIOLATION");
+  expect(card!.title).toContain("IRON-01");                              // names the subject
 });
 
 test("A5_a_foreign_store_is_NAMED_never_confident", () => {
@@ -80,11 +80,11 @@ test("A8_the_token_set_is_exactly_7_and_unique", () => {
  * THE AUDIT'S NEW TESTS (bravo's F1/F2/F4) — the behaviors the audit wired.
  */
 test("A9_the_callers_card_emits (F4 — the token was declared, never emitted)", () => {
-  const card = callersCard("mirror.ts", ["a.ts", "b.ts"]);
+  const card = callersCard(["a.ts", "b.ts"]);
   expect(card).toBeDefined();
   expect(card!.source).toBe("plutus/callers");
   expect(card!.total).toBe(2);                       // the measured count
-  expect(callersCard("x.ts", [])).toBeNull();        // the anti-phantom law
+  expect(callersCard([])).toBeNull();                  // the anti-phantom law
 });
 
 test("A10_the_production_chain_is_the_calibrated_chain (F1+F2)", async () => {

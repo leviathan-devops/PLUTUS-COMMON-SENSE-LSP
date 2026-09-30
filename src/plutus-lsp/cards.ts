@@ -1,181 +1,202 @@
 /**
- * plutus-lsp · cards.ts — the 7 tokens + the card renderer (W3)
+ * plutus-lsp · cards.ts — THE INFO CARDS (the design mirrors GI Kernels' gi-lsp/cards.ts)
  *
- * THE LAW: every card asserts only what it MEASURED (`total`); a fact-free file yields NO card
- * (the anti-phantom law). The card shape is inherited from the GI precedent (FactCard).
+ * ★ ONE SERVER, ONE CONSUMER: the LSP emits these as Diagnostics. A card is built from a
+ *   MEASURED graph row + a MEASURED judge probability — never a guess. A card that asserts
+ *   a count or a probability it did not measure is the FABRICATION anti-pattern.
+ *
+ * ★ WHAT CHANGED FROM THE FIRST CUT (the operator caught it: "this is unintelligible slop"):
+ *   BEFORE: one blob per file — "2 canon law(s) govern this file\n[IMMUTABLE] SL-CAP: …". The
+ *           agent cannot act on a wall of text with no subject, no anchor, and no verdict.
+ *   AFTER:  ONE CARD PER GOVERNING LAW, per the GI CALLERS/UNWIRED shape —
+ *             · the title NAMES THE SUBJECT (the law id + what it governs)
+ *             · the rows are EVIDENCE: the statement, the file:line, the tier,
+ *               and the JUDGE'S OWN probability (traceable to the model that produced it)
+ *             · the card's source is a single token the LSP consumer filters on
+ *             · null when nothing was measured — silence, never a fabricated card
  */
 
-import type { LawEntity } from "./store.ts";
-import type { Verdict } from "./judge.ts";
-
-// ── THE 7 TOKENS ─────────────────────────────────────────────────────────────
+// ── THE TOKENS (a single-card filterable source, mirroring GI_LSP_TOKENS) ─────────────────
 export const PLUTUS_LSP_TOKENS = [
-  "plutus/law",
-  "plutus/violation",
-  "plutus/suspect",
-  "plutus/tier",
-  "plutus/callers",
-  "plutus/drift",
-  "plutus/stale",
+  "plutus/law",       // one governing law, with the judge's relevance probability
+  "plutus/violation", // the judged breach of a governing law
+  "plutus/tier",      // the immutability notice (folded into law cards now)
+  "plutus/callers",   // the import-edge blast radius
+  "plutus/drift",     // the judged conflict with a prior decision
+  "plutus/suspect",   // the marginal / inconclusive
+  "plutus/stale",     // a named refusal (no graph, judge down)
 ] as const;
 export type PlutusLspToken = (typeof PLUTUS_LSP_TOKENS)[number];
-/** FIX F4 (audit-bravo): `plutus/callers` IS NOW EMITTED — see callersCard() below. */
 
 export const SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 } as const;
 type Sev = (typeof SEVERITY)[keyof typeof SEVERITY];
 
+export type CardShape = "LAW" | "VIOLATION" | "DRIFT" | "CALLERS" | "SUSPECT" | "STALE";
+
+/** ★ THE CARD — the GI FactCard shape, unchanged. The consumer is the LSP runtime. */
 export interface FactCard {
-  shape: "LAW" | "VIOLATION" | "SUSPECT" | "TIER" | "CALLERS" | "DRIFT" | "STALE";
+  shape: CardShape;
+  /** NAMES THE SUBJECT — "SL-CAP — stop-loss cap · 2/12 candidate laws kept" */
   title: string;
+  /** the EVIDENCE rows — real file:line, real measured numbers. NEVER empty. */
   rows: string[];
-  severity: 1 | 2 | 3 | 4;
+  /** LSP severity: 1 Error · 2 Warning · 3 Information · 4 Hint. Cards are INFORMATIONAL. */
+  severity: Sev;
+  /** the single filterable token. */
   source: PlutusLspToken;
+  /** the count this card measured (for `shown=N total=M`); -1 when not a counted shape. */
   total: number;
 }
 
-// ── THE RENDERERS ────────────────────────────────────────────────────────────
-export function lawCard(target: string, laws: LawEntity[]): FactCard | null {
-  if (laws.length === 0) return null;                 // the anti-phantom law
-  return {
-    shape: "LAW",
-    title: `${laws.length} canon law(s) govern this file`,
-    rows: laws.slice(0, 5).map((l) => `[${l.tier}] ${l.name}: ${l.statement.slice(0, 96)} — ${l.anchor}`),
-    severity: SEVERITY.Information,
-    source: "plutus/law",
-    total: laws.length,
-  };
+// ── THE GRAPH ROW (what a law card is built from — a MEASURED store row) ───────────────────
+import type { LawEntity } from "./store.ts";
+import type { Verdict } from "./judge.ts";
+
+/** A law + the judge's measured relevance probability (the kernel's output). */
+export interface JudgedLaw {
+  law: LawEntity;
+  /** the judge's relevance noul, 0..1, or -1 when UNREADABLE (never shown as a number). */
+  p: number;
 }
 
-export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): FactCard | null {
+/**
+ * LAW — ★ ONE CARD PER GOVERNING LAW (the design fix). The title names the law AND what the
+ * kernel decided; the rows carry the verbatim statement, the file:line anchor, the tier, and
+ * the judge's own probability — so every claim is traceable to a read and to the model.
+ *
+ * @param kept   the laws the relevance kernel KEPT (measured)
+ * @param total  how many candidates the detector raised (measured) — "kept/total" is the
+ *               kernel's precision, shown so the agent can see the filter was narrow
+ */
+export function lawCard(kept: JudgedLaw[], totalCandidates: number, judged: boolean): FactCard[] {
+  if (kept.length === 0) return [];                 // the anti-phantom law: silence, not a card
+  return kept.map(({ law, p }) => {
+    const prob = p >= 0 ? `relevance ${p.toFixed(2)}` : "relevance unread";
+    const of = totalCandidates > kept.length ? ` · kept ${kept.length} of ${totalCandidates} candidates` : "";
+    return {
+      shape: "LAW" as const,
+      title: `${law.name} — governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
+      rows: [
+        `LAW: ${law.statement}`,
+        `TIER: ${law.tier}${law.tier === "IMMUTABLE" ? " — never change without a recorded ruling" : ""}`,
+        `SOURCE: ${law.anchor}`,
+        `JUDGE: ${prob}`,
+      ],
+      severity: SEVERITY.Information,
+      source: "plutus/law" as const,
+      total: kept.length,
+    };
+  });
+}
+
+/**
+ * VIOLATION / DRIFT / SUSPECT — the JUDGED outcome on the laws that survived relevance.
+ * The title names the breaching law; the rows carry the whole vector so the agent sees
+ * WHICH clause fired and how strongly (the GI meaningCard pattern: the model is named).
+ */
+export function verdictCard(v: Verdict, kept: JudgedLaw[]): FactCard | null {
   const pct = (n?: number) => (typeof n === "number" ? n.toFixed(3) : "n/a");
-  // FIX (audit cards.ts:61): a wrongness verdict with NO laws is a JUDGE artifact, not a law card
-  if (v.kind !== "LAW" && v.kind !== "JUDGE_DOWN" && v.kind !== "INCONCLUSIVE" && laws.length === 0) return null;
   if (v.kind === "JUDGE_DOWN") {
     return {
       shape: "STALE",
-      title: `the judge is DOWN — the canon could not be consulted`,
-      rows: [v.reason ?? "JEVK5_DOWN"],
+      title: "the judge is down — the canon could not be consulted",
+      rows: [`reason: ${v.reason ?? "JEVK5_DOWN"}`],
       severity: SEVERITY.Warning,
       source: "plutus/stale",
-      total: 1,   // FIX F7 (audit-bravo): the ONE-fact comment said 1 while the value said 0
+      total: 1,
     };
   }
-  // FIX C (the audit: an INCONCLUSIVE verdict emitted ZERO cards — a SILENT pass).
-  // The agent must SEE that the judgment could not be reached.
   if (v.kind === "INCONCLUSIVE") {
     return {
       shape: "SUSPECT",
-      title: `INCONCLUSIVE — the judge could not reach a verdict (weakest: ${v.weakest ?? "none"})`,
+      title: `INCONCLUSIVE — the judge could not reach a verdict (weakest clause ${v.weakest ?? "none"})`,
       rows: [
-        `the unanswered/undecided clause: ${v.weakest ?? "(no deciding clause answered)"}`,
-        `vector: ${Object.entries(v.vector).map(([k, n]) => `${k}=${Number(n).toFixed(3)}`).join(" ") || "(empty)"}`,
+        `the undecided clause: ${v.weakest ?? "(no deciding clause answered)"}`,
+        `vector: ${Object.entries(v.vector).map(([k, n]) => `${k}=${pct(n)}`).join(" ") || "(empty)"}`,
       ],
-      severity: SEVERITY.Hint,   // an INFO — the agent knows the judgment failed
+      severity: SEVERITY.Hint,
       source: "plutus/suspect",
       total: 1,
     };
   }
-  if (v.kind === "LAW") return null;                  // the law card already informs
-  // FIX (audit cards.ts:85): an explicit kind check — an unknown kind yields NO card
-  if (v.kind !== "VIOLATION" && v.kind !== "DRIFT" && v.kind !== "SUSPECT" && v.kind !== "INCONCLUSIVE") return null;
-  // FIX (audit cards.ts:67): attribute by the WEAKEST clause — P4/P5/P6 = wrongness (an IMMUTABLE
-  // law preferred), P7 = drift (a ruling). The weakest node decides the cited law.
-  const law = v.weakest && v.weakest !== "P7"
-    ? (laws.find((l) => l.tier === "IMMUTABLE") ?? laws[0])
-    : (laws[0] ?? laws.find((l) => l.tier === "IMMUTABLE"));
-  if (!law) return null;
+  if (v.kind === "LAW") return null;                // the law cards already inform
+
+  // attribute to the law the verdict actually evaluated
+  const law = v.weakest && v.weakest !== "P7" ? (kept.find((k) => k.law.tier === "IMMUTABLE") ?? kept[0])?.law : kept[0]?.law;
+  if (!law) return null;                            // no measured law → no card, never a guess
+
+  const vector = Object.entries(v.vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ");
   if (v.kind === "VIOLATION") {
     return {
       shape: "VIOLATION",
-      title: `VIOLATION — the change contradicts ${law?.name ?? "the canon"} (P4=${pct(v.vector.P4)})`,
+      title: `VIOLATION — this change contradicts ${law.name} (${v.weakest}=${pct(v.vector[v.weakest as keyof typeof v.vector])})`,
       rows: [
-        `law: [${law?.tier}] ${law?.name}: ${law?.statement.slice(0, 90)}`,
-        `anchor: ${law?.anchor}`,
-        `vector: P4=${pct(v.vector.P4)} P5=${pct(v.vector.P5)} P6=${pct(v.vector.P6)} P7=${pct(v.vector.P7)}`,
+        `LAW: ${law.statement}`,
+        `SOURCE: ${law.anchor}`,
+        `YOU ARE EDITING: ${law.anchor.split(":")[0]} — read the law before this edit lands`,
+        `VECTOR: ${vector}`,
       ],
       severity: SEVERITY.Error,
       source: "plutus/violation",
-      total: 1,   // FIX (audit cards.ts:78): the verdict is ONE measured fact
+      total: 1,
     };
   }
   if (v.kind === "DRIFT") {
     return {
       shape: "DRIFT",
-      title: `DRIFT — the change contradicts a prior decision (P7=${pct(v.vector.P7)})`,
-      rows: [`vector: P7=${pct(v.vector.P7)}`, `law: ${law?.name ?? "n/a"} — ${law?.anchor ?? ""}`],
+      title: `DRIFT — this change contradicts a prior decision (P7=${pct(v.vector.P7)})`,
+      rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vector}`],
       severity: SEVERITY.Warning,
       source: "plutus/drift",
-      total: 1,   // FIX (audit cards.ts:78)
+      total: 1,
     };
   }
   return {
     shape: "SUSPECT",
-    title: `SUSPECT — the law may be breached (P4=${pct(v.vector.P4)}); evidence required`,
-    rows: [`law: [${law?.tier}] ${law?.name}`, `anchor: ${law?.anchor}`, `vector: P4=${pct(v.vector.P4)}`],
+    title: `SUSPECT — ${law.name} may be breached (${v.weakest}=${pct(v.vector[v.weakest as keyof typeof v.vector])}); evidence required`,
+    rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vector}`],
     severity: SEVERITY.Warning,
     source: "plutus/suspect",
-    total: 1,   // FIX (audit cards.ts:78)
+    total: 1,
   };
 }
 
-export function tierCard(laws: LawEntity[]): FactCard | null {
-  const imm = laws.filter((l) => l.tier === "IMMUTABLE");
-  if (imm.length === 0) return null;
-  return {
-    shape: "TIER",
-    title: `${imm.length} IMMUTABLE law(s) — never change without a recorded ruling`,
-    rows: imm.slice(0, 4).map((l) => `${l.name} — ${l.anchor}`),
-    severity: SEVERITY.Information,
-    source: "plutus/tier",
-    total: imm.length,
-  };
-}
-
-export function staleCard(reason: string): FactCard {
-  return { shape: "STALE", title: `the graph is stale or absent`, rows: [reason], severity: SEVERITY.Warning, source: "plutus/stale", total: 1 };
-}
-
-// ── THE LSP MAPPING ──────────────────────────────────────────────────────────
-export interface LspDiagnostic {
-  range: { start: { line: number; character: number }; end: { line: number; character: number } };
-  severity: 1 | 2 | 3 | 4;
-  source: string;
-  message: string;
-}
-
-/** FIX (audit cards.ts:120): a real range — the card's anchor line when known, else 0. */
-export function toDiagnostic(card: FactCard, range?: { line: number; character: number }): LspDiagnostic {
-  const line = range?.line ?? 0;
-  return {
-    range: { start: { line, character: range?.character ?? 0 }, end: { line, character: (range?.character ?? 0) + 1 } },
-    severity: card.severity,
-    source: card.source,
-    message: `${card.title}\n${card.rows.join("\n")}`,
-  };
-}
-
-/** FIX F4 (audit-bravo): the CALLERS card — a REAL read (the L1 import edges), never a promise. */
-export function callersCard(target: string, callers: string[]): FactCard | null {
-  if (callers.length === 0) return null;   // the anti-phantom law
+/** CALLERS — the import-edge blast radius (the real read; a measured count). */
+export function callersCard(callers: string[]): FactCard | null {
+  if (callers.length === 0) return null;
   return {
     shape: "CALLERS",
-    title: `${callers.length} file(s) import this one — a change here reaches them`,
-    rows: callers.slice(0, 6),
+    title: `this file — ${callers.length} importer${callers.length === 1 ? "" : "s"}`,
+    rows: callers.slice(0, 8).map((c) => `imported by ${c}`),
     severity: SEVERITY.Information,
     source: "plutus/callers",
     total: callers.length,
   };
 }
 
-/** The full file pipeline: laws → cards (the L1 detect + L3 enforce). */
-export function fileCards(target: string, laws: LawEntity[], v: Verdict | null, callers: string[] = []): FactCard[] {
+/** STALE — a named refusal (no graph, judge down). A loud card, never a silent pass. */
+export function staleCard(reason: string): FactCard {
+  return {
+    shape: "STALE",
+    title: "the canon graph is unavailable",
+    rows: [`reason: ${reason}`],
+    severity: SEVERITY.Warning,
+    source: "plutus/stale",
+    total: 1,
+  };
+}
+
+/** The full card set for one file: one card per governing law + the judged outcome + the callers. */
+export function fileCards(
+  kept: JudgedLaw[],
+  totalCandidates: number,
+  v: Verdict | null,
+  callers: string[],
+  judged: boolean,
+): FactCard[] {
   const out: FactCard[] = [];
-  const lc = lawCard(target, laws); if (lc) out.push(lc);
-  const tc = tierCard(laws); if (tc) out.push(tc);
-  const cc = callersCard(target, callers); if (cc) out.push(cc);   // FIX F4
-  if (v) { const vc = verdictCard(target, v, laws); if (vc) out.push(vc); }
+  out.push(...lawCard(kept, totalCandidates, judged));
+  const cc = callersCard(callers); if (cc) out.push(cc);
+  if (v) { const vc = verdictCard(v, kept); if (vc) out.push(vc); }
   return out;
 }
-// definitive probe
-// re-proof
-

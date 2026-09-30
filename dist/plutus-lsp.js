@@ -503,34 +503,41 @@ function partitionByRelevance(laws, rows) {
 var PLUTUS_LSP_TOKENS = [
   "plutus/law",
   "plutus/violation",
-  "plutus/suspect",
   "plutus/tier",
   "plutus/callers",
   "plutus/drift",
+  "plutus/suspect",
   "plutus/stale"
 ];
 var SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 };
-function lawCard(target, laws) {
-  if (laws.length === 0)
-    return null;
-  return {
-    shape: "LAW",
-    title: `${laws.length} canon law(s) govern this file`,
-    rows: laws.slice(0, 5).map((l) => `[${l.tier}] ${l.name}: ${l.statement.slice(0, 96)} \u2014 ${l.anchor}`),
-    severity: SEVERITY.Information,
-    source: "plutus/law",
-    total: laws.length
-  };
+function lawCard(kept, totalCandidates, judged) {
+  if (kept.length === 0)
+    return [];
+  return kept.map(({ law, p }) => {
+    const prob = p >= 0 ? `relevance ${p.toFixed(2)}` : "relevance unread";
+    const of = totalCandidates > kept.length ? ` \xB7 kept ${kept.length} of ${totalCandidates} candidates` : "";
+    return {
+      shape: "LAW",
+      title: `${law.name} \u2014 governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
+      rows: [
+        `LAW: ${law.statement}`,
+        `TIER: ${law.tier}${law.tier === "IMMUTABLE" ? " \u2014 never change without a recorded ruling" : ""}`,
+        `SOURCE: ${law.anchor}`,
+        `JUDGE: ${prob}`
+      ],
+      severity: SEVERITY.Information,
+      source: "plutus/law",
+      total: kept.length
+    };
+  });
 }
-function verdictCard(target, v, laws) {
+function verdictCard(v, kept) {
   const pct = (n) => typeof n === "number" ? n.toFixed(3) : "n/a";
-  if (v.kind !== "LAW" && v.kind !== "JUDGE_DOWN" && v.kind !== "INCONCLUSIVE" && laws.length === 0)
-    return null;
   if (v.kind === "JUDGE_DOWN") {
     return {
       shape: "STALE",
-      title: `the judge is DOWN \u2014 the canon could not be consulted`,
-      rows: [v.reason ?? "JEVK5_DOWN"],
+      title: "the judge is down \u2014 the canon could not be consulted",
+      rows: [`reason: ${v.reason ?? "JEVK5_DOWN"}`],
       severity: SEVERITY.Warning,
       source: "plutus/stale",
       total: 1
@@ -539,10 +546,10 @@ function verdictCard(target, v, laws) {
   if (v.kind === "INCONCLUSIVE") {
     return {
       shape: "SUSPECT",
-      title: `INCONCLUSIVE \u2014 the judge could not reach a verdict (weakest: ${v.weakest ?? "none"})`,
+      title: `INCONCLUSIVE \u2014 the judge could not reach a verdict (weakest clause ${v.weakest ?? "none"})`,
       rows: [
-        `the unanswered/undecided clause: ${v.weakest ?? "(no deciding clause answered)"}`,
-        `vector: ${Object.entries(v.vector).map(([k, n]) => `${k}=${Number(n).toFixed(3)}`).join(" ") || "(empty)"}`
+        `the undecided clause: ${v.weakest ?? "(no deciding clause answered)"}`,
+        `vector: ${Object.entries(v.vector).map(([k, n]) => `${k}=${pct(n)}`).join(" ") || "(empty)"}`
       ],
       severity: SEVERITY.Hint,
       source: "plutus/suspect",
@@ -551,19 +558,19 @@ function verdictCard(target, v, laws) {
   }
   if (v.kind === "LAW")
     return null;
-  if (v.kind !== "VIOLATION" && v.kind !== "DRIFT" && v.kind !== "SUSPECT" && v.kind !== "INCONCLUSIVE")
-    return null;
-  const law = v.weakest && v.weakest !== "P7" ? laws.find((l) => l.tier === "IMMUTABLE") ?? laws[0] : laws[0] ?? laws.find((l) => l.tier === "IMMUTABLE");
+  const law = v.weakest && v.weakest !== "P7" ? (kept.find((k) => k.law.tier === "IMMUTABLE") ?? kept[0])?.law : kept[0]?.law;
   if (!law)
     return null;
+  const vector = Object.entries(v.vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ");
   if (v.kind === "VIOLATION") {
     return {
       shape: "VIOLATION",
-      title: `VIOLATION \u2014 the change contradicts ${law?.name ?? "the canon"} (P4=${pct(v.vector.P4)})`,
+      title: `VIOLATION \u2014 this change contradicts ${law.name} (${v.weakest}=${pct(v.vector[v.weakest])})`,
       rows: [
-        `law: [${law?.tier}] ${law?.name}: ${law?.statement.slice(0, 90)}`,
-        `anchor: ${law?.anchor}`,
-        `vector: P4=${pct(v.vector.P4)} P5=${pct(v.vector.P5)} P6=${pct(v.vector.P6)} P7=${pct(v.vector.P7)}`
+        `LAW: ${law.statement}`,
+        `SOURCE: ${law.anchor}`,
+        `YOU ARE EDITING: ${law.anchor.split(":")[0]} \u2014 read the law before this edit lands`,
+        `VECTOR: ${vector}`
       ],
       severity: SEVERITY.Error,
       source: "plutus/violation",
@@ -573,8 +580,8 @@ function verdictCard(target, v, laws) {
   if (v.kind === "DRIFT") {
     return {
       shape: "DRIFT",
-      title: `DRIFT \u2014 the change contradicts a prior decision (P7=${pct(v.vector.P7)})`,
-      rows: [`vector: P7=${pct(v.vector.P7)}`, `law: ${law?.name ?? "n/a"} \u2014 ${law?.anchor ?? ""}`],
+      title: `DRIFT \u2014 this change contradicts a prior decision (P7=${pct(v.vector.P7)})`,
+      rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vector}`],
       severity: SEVERITY.Warning,
       source: "plutus/drift",
       total: 1
@@ -582,65 +589,43 @@ function verdictCard(target, v, laws) {
   }
   return {
     shape: "SUSPECT",
-    title: `SUSPECT \u2014 the law may be breached (P4=${pct(v.vector.P4)}); evidence required`,
-    rows: [`law: [${law?.tier}] ${law?.name}`, `anchor: ${law?.anchor}`, `vector: P4=${pct(v.vector.P4)}`],
+    title: `SUSPECT \u2014 ${law.name} may be breached (${v.weakest}=${pct(v.vector[v.weakest])}); evidence required`,
+    rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vector}`],
     severity: SEVERITY.Warning,
     source: "plutus/suspect",
     total: 1
   };
 }
-function tierCard(laws) {
-  const imm = laws.filter((l) => l.tier === "IMMUTABLE");
-  if (imm.length === 0)
-    return null;
-  return {
-    shape: "TIER",
-    title: `${imm.length} IMMUTABLE law(s) \u2014 never change without a recorded ruling`,
-    rows: imm.slice(0, 4).map((l) => `${l.name} \u2014 ${l.anchor}`),
-    severity: SEVERITY.Information,
-    source: "plutus/tier",
-    total: imm.length
-  };
-}
-function staleCard(reason) {
-  return { shape: "STALE", title: `the graph is stale or absent`, rows: [reason], severity: SEVERITY.Warning, source: "plutus/stale", total: 1 };
-}
-function toDiagnostic(card, range) {
-  const line = range?.line ?? 0;
-  return {
-    range: { start: { line, character: range?.character ?? 0 }, end: { line, character: (range?.character ?? 0) + 1 } },
-    severity: card.severity,
-    source: card.source,
-    message: `${card.title}
-${card.rows.join(`
-`)}`
-  };
-}
-function callersCard(target, callers) {
+function callersCard(callers) {
   if (callers.length === 0)
     return null;
   return {
     shape: "CALLERS",
-    title: `${callers.length} file(s) import this one \u2014 a change here reaches them`,
-    rows: callers.slice(0, 6),
+    title: `this file \u2014 ${callers.length} importer${callers.length === 1 ? "" : "s"}`,
+    rows: callers.slice(0, 8).map((c) => `imported by ${c}`),
     severity: SEVERITY.Information,
     source: "plutus/callers",
     total: callers.length
   };
 }
-function fileCards(target, laws, v, callers = []) {
+function staleCard(reason) {
+  return {
+    shape: "STALE",
+    title: "the canon graph is unavailable",
+    rows: [`reason: ${reason}`],
+    severity: SEVERITY.Warning,
+    source: "plutus/stale",
+    total: 1
+  };
+}
+function fileCards(kept, totalCandidates, v, callers, judged) {
   const out = [];
-  const lc = lawCard(target, laws);
-  if (lc)
-    out.push(lc);
-  const tc = tierCard(laws);
-  if (tc)
-    out.push(tc);
-  const cc = callersCard(target, callers);
+  out.push(...lawCard(kept, totalCandidates, judged));
+  const cc = callersCard(callers);
   if (cc)
     out.push(cc);
   if (v) {
-    const vc = verdictCard(target, v, laws);
+    const vc = verdictCard(v, kept);
     if (vc)
       out.push(vc);
   }
@@ -649,6 +634,20 @@ function fileCards(target, laws, v, callers = []) {
 
 // scripts/plutus-lsp.ts
 var RECEIPT = process.env.PLUTUS_LSP_RECEIPT ?? "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/forensic/lsp-receipts.log";
+function toDiagnostic(card, src) {
+  const firstLine = 0;
+  const col = src.split(`
+`)[firstLine]?.length ?? 0;
+  return {
+    range: { start: { line: firstLine, character: 0 }, end: { line: firstLine, character: col } },
+    severity: card.severity,
+    source: card.source,
+    code: card.shape,
+    message: `${card.title}
+${card.rows.map((r) => "  " + r).join(`
+`)}`
+  };
+}
 var receipt = (line) => {
   try {
     appendFileSync(RECEIPT, `${new Date().toISOString()} ${clean(line)}
@@ -693,12 +692,14 @@ async function pipeline(file, source, useJudge = true) {
   let vector = {};
   let all = candidates;
   let relevance = [];
+  let judgedLaws = [];
   if (useJudge && candidates.length > 0) {
     const rel = await relevancePass(candidates, file, hunk);
     if (rel.ok) {
       const part = partitionByRelevance(candidates, rel.scored);
       all = part.relevant;
       relevance = rel.scored.map((r) => ({ lawId: r.lawId, p: r.p }));
+      judgedLaws = part.relevant.map((law) => ({ law, p: rel.scored.find((r) => r.index === candidates.indexOf(law))?.p ?? -1 }));
       receipt(`RELEVANCE ok=${rel.scored.filter((r) => r.p >= RELEVANCE_T).length}/${rel.scored.length} ` + `${part.rejected.map((x) => `${x.law.name}@${x.p.toFixed(2)}`).join(",") || "(none rejected)"}`);
       if (all.length === 0) {
         receipt("RELEVANCE none \u2014 no card emitted");
@@ -706,17 +707,19 @@ async function pipeline(file, source, useJudge = true) {
       }
     } else {
       all = candidates.slice(0, 3);
+      judgedLaws = all.map((law) => ({ law, p: -1 }));
       receipt(`RELEVANCE degraded=${rel.reason}`);
     }
   } else if (candidates.length > 0) {
     all = candidates.slice(0, 3);
+    judgedLaws = all.map((law) => ({ law, p: -1 }));
   }
   if (useJudge) {
     const res = await chain(buildState(file, all, hunk), ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], 6000, observableQuestion(all));
     v = verdict(res);
     vector = Object.fromEntries(Object.entries(res.answers).map(([k, n]) => [k, Number(n)]));
   }
-  const cards = fileCards(file, all, v, callersOf(store, file));
+  const cards = fileCards(judgedLaws, candidates.length, v, callersOf(store, file), useJudge && relevance.length > 0);
   const tokens = [...new Set(cards.map((c) => c.source))];
   receipt(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
   return { tokens, cards, refused: null, vector, relevance };
@@ -783,7 +786,7 @@ ${j}`);
         log(`STALE_DROP ${file} (seq ${my} < ${seq.get(uri)})`);
         return;
       }
-      const diags = r.refused ? [] : r.cards.map((c) => toDiagnostic(c, c.range));
+      const diags = r.refused ? [] : r.cards.map((c) => toDiagnostic(c, src));
       send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: diags } });
     } catch (e) {
       log(`ANALYZE_FAIL ${file}: ${e.message}`);
