@@ -538,7 +538,17 @@ ${j}`);
         continue;
       receipt(`FRAME ${msg.method ?? "?"}`);
       if (msg.method === "initialize") {
-        send({ jsonrpc: "2.0", id: msg.id, result: { capabilities: { textDocumentSync: 1, diagnosticProvider: {} }, serverInfo: { name: "plutus-lsp", version: "0.1.0" } } });
+        send({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: {
+            capabilities: {
+              textDocumentSync: { openClose: true, change: 1 },
+              diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false }
+            },
+            serverInfo: { name: "plutus-lsp", version: "0.1.0" }
+          }
+        });
       } else if (msg.method === "initialized") {} else if (msg.method === "shutdown") {
         send({ jsonrpc: "2.0", id: msg.id, result: null });
       } else if (msg.method === "exit") {
