@@ -25,13 +25,13 @@ toDiagnostic(): code=shape, the title on line 1, the rows indented beneath
 ## THE CARDS AS THEY NOW RENDER (measured, container, judge live)
 ```
 [code=LAW]    severity=3   SL-CAP — governs this code (relevance 0.37)
-  LAW:    the stop-loss must never exceed 150 pips
+  LAW:    SL ceiling = 36 pips HARD (D17)
   TIER:   IMMUTABLE — never change without a recorded ruling
   SOURCE: engine3_trade.py:307
   JUDGE:  relevance 0.37
 
 [code=DRIFT]  severity=2   DRIFT — this change contradicts a prior decision (P7=0.880)
-  LAW:    the stop-loss must never exceed 150 pips
+  LAW:    SL ceiling = 36 pips HARD (D17)
   SOURCE: engine3_trade.py:307
   VECTOR: P1=0.259 P2=0.422 P3=0.749 P4=0.857 P5=0.300 P6=0.781 P7=0.880
 
