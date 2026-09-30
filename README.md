@@ -11,3 +11,5 @@ The build entry: `scripts/plutus-lsp.ts` (built by the W1→W6 waves).
 
 ## The precedent
 `Graph_Intelligence/scripts/gi-lsp.ts` (the GI reflex) · `Jev_Gates/scripts/jg-lsp.ts` (the ticket reflex).
+
+<!-- the live-TUI spawn probe -->

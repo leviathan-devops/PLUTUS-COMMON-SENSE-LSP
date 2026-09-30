@@ -7,6 +7,8 @@ import { readFileSync as readFileSync2, appendFileSync } from "fs";
 // src/plutus-lsp/store.ts
 import { readFileSync, existsSync, statSync } from "fs";
 import { join, dirname, resolve } from "path";
+import { connect } from "net";
+import { homedir } from "os";
 var ROOT_MARKERS = [".arsumbris", ".omp/graph-intelligence", "MASTER_CONTEXT", "tsconfig.json"];
 var STRONG_MARKERS = [".arsumbris", ".omp/graph-intelligence", "MASTER_CONTEXT"];
 var PLUTUS_NO_STORE = "PLUTUS_NO_STORE";
@@ -94,7 +96,87 @@ function declarationsIn(source) {
   }
   return [...out];
 }
-var STOPWORDS = new Set([
+async function readL2(socketPath, timeoutMs = 800) {
+  if (!existsSync(socketPath))
+    return { ok: false, reason: `${PLUTUS_NO_STORE}: socket absent (${socketPath})` };
+  return await new Promise((res) => {
+    let sock;
+    try {
+      sock = connect(socketPath);
+    } catch (e) {
+      return res({ ok: false, reason: `L2_ERROR: ${e.message}` });
+    }
+    let done = false;
+    const finish = (r) => {
+      if (!done) {
+        done = true;
+        sock.destroy();
+        res(r);
+      }
+    };
+    const t = setTimeout(() => finish({ ok: false, reason: `L2_TIMEOUT (${timeoutMs}ms)` }), timeoutMs);
+    sock.on("connect", () => {
+      const req = Buffer.from(JSON.stringify({ read: "overview" }));
+      const len = Buffer.alloc(4);
+      len.writeUInt32BE(req.length);
+      sock.write(Buffer.concat([len, req]));
+    });
+    const chunks = [];
+    sock.on("data", (c) => {
+      chunks.push(c);
+      const b = Buffer.concat(chunks);
+      if (b.length > 32 * 1024 * 1024) {
+        clearTimeout(t);
+        finish({ ok: false, reason: `L2_OVERSIZE: ${b.length} bytes` });
+        return;
+      }
+      if (b.length < 4)
+        return;
+      const n = b.readUInt32BE(0);
+      if (n > 16 * 1024 * 1024) {
+        clearTimeout(t);
+        finish({ ok: false, reason: `L2_FRAME_TOO_LARGE: ${n} bytes` });
+        return;
+      }
+      if (b.length < 4 + n)
+        return;
+      clearTimeout(t);
+      try {
+        const j = JSON.parse(b.subarray(4, 4 + n).toString("utf8"));
+        const g = j?.result?.overview?.graph_shape;
+        const nc = g?.node_count, ec = g?.edge_count;
+        if (!Number.isFinite(nc) || !Number.isFinite(ec)) {
+          finish({ ok: false, reason: `L2_SHAPE_INVALID: node_count=${nc} edge_count=${ec}` });
+        } else
+          finish({ ok: true, nodeCount: nc, edgeCount: ec });
+      } catch (e) {
+        finish({ ok: false, reason: `L2_PARSE: ${e.message}` });
+      }
+    });
+    sock.on("error", (e) => {
+      clearTimeout(t);
+      finish({ ok: false, reason: `L2_ERROR: ${e.message}` });
+    });
+    sock.on("close", () => {
+      clearTimeout(t);
+      finish({ ok: false, reason: "L2_CLOSED: the peer closed before a full frame" });
+    });
+    sock.on("end", () => {
+      clearTimeout(t);
+      finish({ ok: false, reason: "L2_ENDED: the peer ended the stream" });
+    });
+  });
+}
+function l2SocketFor(root) {
+  const p = resolve(root);
+  let h = 0xcbf29ce484222325n;
+  for (const b of Buffer.from(p)) {
+    h = (h ^ BigInt(b)) * 0x100000001b3n & 0xffffffffffffffffn;
+  }
+  const home = homedir();
+  return join(home, ".arsumbris", "au-engine", "run", `${h.toString(16).padStart(16, "0")}.sock`);
+}
+var STOPWORDS = Object.freeze(new Set([
   "file",
   "files",
   "the",
@@ -135,7 +217,7 @@ var STOPWORDS = new Set([
   "true",
   "false",
   "null"
-]);
+]));
 function tokensOf(name) {
   return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).map((t) => t.toLowerCase()).filter((t) => t.length >= 4 && !STOPWORDS.has(t));
 }
@@ -357,7 +439,7 @@ function lawCard(target, laws) {
     shape: "LAW",
     title: `${laws.length} canon law(s) govern this file`,
     rows: laws.slice(0, 5).map((l) => `[${l.tier}] ${l.name}: ${l.statement.slice(0, 96)} \u2014 ${l.anchor}`),
-    severity: 3,
+    severity: SEVERITY.Information,
     source: "plutus/law",
     total: laws.length
   };
@@ -405,7 +487,7 @@ function verdictCard(target, v, laws) {
         `anchor: ${law?.anchor}`,
         `vector: P4=${pct(v.vector.P4)} P5=${pct(v.vector.P5)} P6=${pct(v.vector.P6)} P7=${pct(v.vector.P7)}`
       ],
-      severity: 1,
+      severity: SEVERITY.Error,
       source: "plutus/violation",
       total: 1
     };
@@ -415,7 +497,7 @@ function verdictCard(target, v, laws) {
       shape: "DRIFT",
       title: `DRIFT \u2014 the change contradicts a prior decision (P7=${pct(v.vector.P7)})`,
       rows: [`vector: P7=${pct(v.vector.P7)}`, `law: ${law?.name ?? "n/a"} \u2014 ${law?.anchor ?? ""}`],
-      severity: 2,
+      severity: SEVERITY.Warning,
       source: "plutus/drift",
       total: 1
     };
@@ -424,7 +506,7 @@ function verdictCard(target, v, laws) {
     shape: "SUSPECT",
     title: `SUSPECT \u2014 the law may be breached (P4=${pct(v.vector.P4)}); evidence required`,
     rows: [`law: [${law?.tier}] ${law?.name}`, `anchor: ${law?.anchor}`, `vector: P4=${pct(v.vector.P4)}`],
-    severity: 2,
+    severity: SEVERITY.Warning,
     source: "plutus/suspect",
     total: 1
   };
@@ -437,10 +519,13 @@ function tierCard(laws) {
     shape: "TIER",
     title: `${imm.length} IMMUTABLE law(s) \u2014 never change without a recorded ruling`,
     rows: imm.slice(0, 4).map((l) => `${l.name} \u2014 ${l.anchor}`),
-    severity: 3,
+    severity: SEVERITY.Information,
     source: "plutus/tier",
     total: imm.length
   };
+}
+function staleCard(reason) {
+  return { shape: "STALE", title: `the graph is stale or absent`, rows: [reason], severity: SEVERITY.Warning, source: "plutus/stale", total: 1 };
 }
 function toDiagnostic(card, range) {
   const line = range?.line ?? 0;
@@ -512,11 +597,16 @@ async function pipeline(file, source, useJudge = true) {
   } catch (e) {
     const msg = e.message;
     receipt(`REFUSE ${msg.split(":")[0]} file=${file}`);
-    return { tokens: [], cards: [], refused: msg, vector: {} };
+    const sc = staleCard(msg);
+    return { tokens: [sc.source], cards: [sc], refused: msg, vector: {} };
   }
   const decls = declarationsIn(source);
   const hunk = source.slice(0, 1200);
   const all = lawsForHunk(store, file, decls, hunk, 3);
+  try {
+    const l2 = await readL2(l2SocketFor(store.root), 400);
+    receipt(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`);
+  } catch {}
   if (all.length === 0) {
     receipt(`NO-LAW file=${file} decls=${decls.length}`);
     return { tokens: [], cards: [], refused: null, vector: {} };

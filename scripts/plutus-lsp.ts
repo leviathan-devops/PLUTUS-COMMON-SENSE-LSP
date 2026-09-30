@@ -12,9 +12,9 @@
  */
 
 import { readFileSync, appendFileSync } from "node:fs";
-import { loadStore, lawsForHunk, declarationsIn, callersOf } from "../src/plutus-lsp/store.ts";
+import { loadStore, lawsForHunk, declarationsIn, callersOf, readL2, l2SocketFor } from "../src/plutus-lsp/store.ts";
 import { chain, verdict, buildState, observableQuestion } from "../src/plutus-lsp/judge.ts";
-import { fileCards, toDiagnostic, PLUTUS_LSP_TOKENS } from "../src/plutus-lsp/cards.ts";
+import { fileCards, toDiagnostic, staleCard, PLUTUS_LSP_TOKENS } from "../src/plutus-lsp/cards.ts";
 
 // FIX F4 (audit-alpha): the receipt MUST be durable — /tmp is ephemeral and the spawn
 // proof was irreproducible. Default: the repo's forensic/ dir (an env override allowed).
@@ -37,7 +37,10 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   } catch (e) {
     const msg = (e as Error).message;
     receipt(`REFUSE ${msg.split(":")[0]} file=${file}`);
-    return { tokens: [], cards: [], refused: msg, vector: {} };
+    // FIX F5 (audit-bravo: staleCard had zero callers): a refused store emits the STALE card
+    // so the agent SEES the graph problem instead of silence.
+    const sc = staleCard(msg);
+    return { tokens: [sc.source], cards: [sc], refused: msg, vector: {} };
   }
   const decls = declarationsIn(source);
   const hunk = source.slice(0, 1200);
@@ -45,6 +48,12 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   // lawsForHunk (ranked top-3) + observableQuestion + ALL 7 nodes. The calibration's numbers
   // now describe the thing that ships.
   const all = lawsForHunk(store, file, decls, hunk, 3);
+  // FIX F3 (audit-bravo: readL2 was dead): a lightweight L2 probe — the typed graph's liveness
+  // is recorded in the receipt (never blocking; L1 is the primary read).
+  try {
+    const l2 = await readL2(l2SocketFor(store.root), 400);
+    receipt(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`);
+  } catch { /* the L1 read stands alone */ }
   if (all.length === 0) { receipt(`NO-LAW file=${file} decls=${decls.length}`); return { tokens: [], cards: [], refused: null, vector: {} }; }
 
   let v = null;

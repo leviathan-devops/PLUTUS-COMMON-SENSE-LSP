@@ -40,7 +40,7 @@ export function lawCard(target: string, laws: LawEntity[]): FactCard | null {
     shape: "LAW",
     title: `${laws.length} canon law(s) govern this file`,
     rows: laws.slice(0, 5).map((l) => `[${l.tier}] ${l.name}: ${l.statement.slice(0, 96)} — ${l.anchor}`),
-    severity: 3,
+    severity: SEVERITY.Information,
     source: "plutus/law",
     total: laws.length,
   };
@@ -93,7 +93,7 @@ export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): Fact
         `anchor: ${law?.anchor}`,
         `vector: P4=${pct(v.vector.P4)} P5=${pct(v.vector.P5)} P6=${pct(v.vector.P6)} P7=${pct(v.vector.P7)}`,
       ],
-      severity: 1,
+      severity: SEVERITY.Error,
       source: "plutus/violation",
       total: 1,   // FIX (audit cards.ts:78): the verdict is ONE measured fact
     };
@@ -103,7 +103,7 @@ export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): Fact
       shape: "DRIFT",
       title: `DRIFT — the change contradicts a prior decision (P7=${pct(v.vector.P7)})`,
       rows: [`vector: P7=${pct(v.vector.P7)}`, `law: ${law?.name ?? "n/a"} — ${law?.anchor ?? ""}`],
-      severity: 2,
+      severity: SEVERITY.Warning,
       source: "plutus/drift",
       total: 1,   // FIX (audit cards.ts:78)
     };
@@ -112,7 +112,7 @@ export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): Fact
     shape: "SUSPECT",
     title: `SUSPECT — the law may be breached (P4=${pct(v.vector.P4)}); evidence required`,
     rows: [`law: [${law?.tier}] ${law?.name}`, `anchor: ${law?.anchor}`, `vector: P4=${pct(v.vector.P4)}`],
-    severity: 2,
+    severity: SEVERITY.Warning,
     source: "plutus/suspect",
     total: 1,   // FIX (audit cards.ts:78)
   };
@@ -125,7 +125,7 @@ export function tierCard(laws: LawEntity[]): FactCard | null {
     shape: "TIER",
     title: `${imm.length} IMMUTABLE law(s) — never change without a recorded ruling`,
     rows: imm.slice(0, 4).map((l) => `${l.name} — ${l.anchor}`),
-    severity: 3,
+    severity: SEVERITY.Information,
     source: "plutus/tier",
     total: imm.length,
   };
@@ -177,4 +177,3 @@ export function fileCards(target: string, laws: LawEntity[], v: Verdict | null, 
   return out;
 }
 
-// the live-TUI spawn probe 1790756282

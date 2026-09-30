@@ -210,12 +210,12 @@ export function l2SocketFor(root: string): string {
 }
 
 /** The generic tokens that must NOT match (the over-match defect, found by the adversarial sweep). */
-export const STOPWORDS: ReadonlySet<string> = new Set([
+export const STOPWORDS: ReadonlySet<string> = Object.freeze(new Set([
   "file", "files", "the", "and", "for", "with", "from", "this", "that", "type", "types",
   "name", "names", "value", "values", "data", "code", "test", "tests", "main", "index",
   "util", "utils", "core", "base", "src", "lib", "spec", "docs", "readme", "package",
   "const", "export", "function", "class", "interface", "return", "true", "false", "null",
-]);   // FIX (audit store.ts:193): ReadonlySet — a caller cannot corrupt the global matcher
+])) as ReadonlySet<string>;   // FIX F13 (audit-bravo): FROZEN at runtime, not just typed readonly
 
 /** Split an identifier into lowercase tokens (camelCase + snake_case), dropping the generic ones. */
 export function tokensOf(name: string): string[] {
