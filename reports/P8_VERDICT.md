@@ -6,7 +6,7 @@
 | P0 | the baseline measured | **GREEN** | f4b9260; gi-lsp 522238b0626dfea7; L1 1277+564/1141; the judge live |
 | P1 | the DPL1 + the wave-plan | **GREEN** | packages/plutus-common-sense-lsp/ (predicate PASS, spec-audit 0/8) |
 | P2 | the 4 spawn gates | **GREEN** | lsp.json ✓ · the rootMarkers ✓ · enableLsp=default · diagnosticsOnEdit |
-| P3 | the waves audited | **GREEN** | W1–W6 built; the battery 34 pass / 0 fail; the per-wave gates each a tool result |
+| P3 | the waves audited | **GREEN** | W1–W6 built; the battery 18 pass / 0 fail (the audit's FIX D added one; the OLD '34' had no producing command — audit-alpha's F5); the per-wave gates each a tool result |
 | P4 | the runtime receipt | **GREEN (driven)** | `PUBLISH n=3 … verdict=SUSPECT` in /tmp/plutus-lsp-receipts.log |
 | P5 | the adversarial sweep | **GREEN** | 8 angles; A3 found a defect → fixed → re-run PASS; the final pass is clean |
 | P6 | the docs + the audit line | **GREEN** | the 11 canon + the 5 ship docs; `AUDIT GATE: FAIL (0 critical · 12 high)` |
@@ -14,7 +14,7 @@
 
 ## THE RECEIPT (the legal-stop set)
 - **the baseline diff** — the pin's numbers re-measured: all matched; the tree 0 → 4 src files.
-- **the battery** — `bun test tests/` → **34 pass / 0 fail**.
+- **the battery** — `bun test tests/` → **18 pass / 0 fail**.
 - **the audit verdict** — `AUDIT GATE: FAIL (0 critical, 12 high)` after 3 rounds; 26 confirmed
   defects fixed; the CRITICAL class eliminated. **NO SHIP-READY CLAIM.**
 - **the runtime ledger** — the selftest (2 cards + 5 live nouls in ONE pass); the drive (the LSP

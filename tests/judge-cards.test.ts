@@ -10,8 +10,12 @@ import type { LawEntity } from "../src/plutus-lsp/store.ts";
 const LAW: LawEntity = { id: "law::IRON-01", name: "IRON-01", statement: "ZFP threshold = 45 -- the tipping point", tier: "IMMUTABLE", anchor: "bible40:2997", source: "MASTER_CONTEXT" };
 
 test("test_judge_chain_seven_nouls", async () => {
+  // FIX F6 (audit-alpha): the OLD form returned with ZERO assertions when the judge was
+  // down — a VACUOUS PASS. The live test now FAILS with the named reason (the suite
+  // requires the judge; a down judge is a red suite, never a green one).
   const h = await health();
-  if (!h.ok) { console.warn(`JEVK5 down — ${h.reason}`); return; }   // the rig-down path is NAMED, never faked
+  expect(h.ok).toBe(true);   // the judge must be up — a down judge FAILS this test
+  if (!h.ok) throw new Error(`the judge is down: ${h.reason}`);
   const r = await chain(buildState("mirror.ts", [LAW], "export function computeMirrorSL() { const sl = 200; }"));
   expect(r.ok).toBe(true);
   expect(Object.keys(r.answers).length).toBe(7);      // all seven answered

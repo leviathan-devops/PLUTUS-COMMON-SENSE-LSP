@@ -38,7 +38,12 @@ test("A3_a_fact_free_file_yields_NO_card", () => {
 });
 
 test("A4_a_known_violation_renders_the_VIOLATION_token", () => {
-  const card = fileCards("mirror.ts", [{ id: "law::IRON-01", name: "IRON-01", statement: "SL cap 150 pips", tier: "IMMUTABLE", anchor: "b:1", source: "MC" }], { kind: "VIOLATION", weakest: "P4", vector: { P4: 0.91 } }).find((c) => c.shape === "VIOLATION");
+  // FIX F7 (audit-alpha: A4 was SELF-REFERENTIAL — it hand-built the vector + asserted the
+  // renderer echoed it). The REAL path: verdict() DECIDES from the vector (the threshold
+  // crossing), then the renderer. Both halves now.
+  const v = verdict({ ok: true, answers: { P4: 0.91 }, requests: 1 });   // the real decision
+  expect(v.kind).toBe("VIOLATION");                                      // the threshold crossed
+  const card = fileCards("mirror.ts", [{ id: "law::IRON-01", name: "IRON-01", statement: "SL cap 150 pips", tier: "IMMUTABLE", anchor: "b:1", source: "MC" }], v).find((c) => c.shape === "VIOLATION");
   expect(card).toBeDefined();
   expect(card!.source).toBe("plutus/violation");
   expect(card!.severity).toBe(1);

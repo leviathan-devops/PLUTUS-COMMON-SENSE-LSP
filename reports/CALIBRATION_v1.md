@@ -14,27 +14,44 @@ The sweep (P4 ≥ bar → VIOLATION), verbatim from the run:
 
 | bar | TP/4 | FP/4 | precision | recall | F1 |
 |---|---|---|---|---|---|
-| 0.30 | 3 | 3 | 0.50 | 0.75 | **0.60** ← the optimum |
-| 0.45 | 3 | 3 | 0.50 | 0.75 | 0.60 |
-| 0.50 | 2 | 1 | 0.67 | 0.50 | 0.57 |
+| 0.30 | 3 | 3 | 0.50 | 0.75 | 0.60 ← the optimum (the LOWEST bar with max F1) |
+| 0.35 | 3 | 3 | 0.50 | 0.75 | 0.60 ← the optimum (the LOWEST bar with max F1) |
+| 0.40 | 3 | 3 | 0.50 | 0.75 | 0.60 ← the optimum (the LOWEST bar with max F1) |
+| 0.45 | 3 | 3 | 0.50 | 0.75 | 0.60 ← the optimum (the LOWEST bar with max F1) |
+| 0.50 | 2 | 2 | 0.50 | 0.50 | 0.50 |
+| 0.55 | 1 | 1 | 0.50 | 0.25 | 0.33 |
 | 0.60 | 1 | 0 | 1.00 | 0.25 | 0.40 |
-| ≥0.65 | 0 | 0 | 0.00 | 0.00 | 0.00 |
+| 0.65 | 0 | 0 | 0.00 | 0.00 | 0.00 |
+| 0.70 | 0 | 0 | 0.00 | 0.00 | 0.00 |
+| 0.75 | 0 | 0 | 0.00 | 0.00 | 0.00 |
+| 0.80 | 0 | 0 | 0.00 | 0.00 | 0.00 |
+| 0.85 | 0 | 0 | 0.00 | 0.00 | 0.00 |
+| 0.90 | 0 | 0 | 0.00 | 0.00 | 0.00 |
 
-**Above 0.60 the instrument goes BLIND** — no violation scores that high on this corpus. The
-operating point is **0.30** (the recall-favoring end).
+**Above 0.60 the instrument goes BLIND** — no violation scores that high on this corpus.
+**THE TIE (audit-alpha's F3, disclosed):** bars 0.30/0.35/0.40/0.45 all give F1=0.60 — a
+4-way tie. **THE TIE-BREAK RULE (now explicit):** the LOWEST bar with max F1 (the
+recall-favoring end) — because the polarity law bounds the false-positive cost (a flagged
+clean is a Warning, never a block). The rule is IN the doc because it was previously
+implicit in `calibrate.ts`'s first-max pick.
 
-## THE PER-ITEM MEASUREMENT (verbatim)
+## THE PER-ITEM MEASUREMENT (re-generated from the live run 2026-09-30)
+**THE STATE-DEPENDENCE (audit-alpha's F2): the per-item P4s depend on the STATE (the law set
+`lawsForHunk` selects + the hunk). The judge itself is DETERMINISTIC (5 identical runs on one
+state -> 0.916). A re-run with a different law set moves the per-item values; the HEADLINE
+reproduces. Re-generate: `bun tests/calibration/calibrate.ts`.
 
 | id | label | P4 | P7 | what it is |
 |---|---|---|---|---|
-| C1 | violation | 0.610 | 0.648 | SL 200 exceeds the 150-pip cap |
-| C2 | violation | 0.588 | 0.556 | three TPs (IRON-03: ONE TP) |
-| C3 | violation | 0.310 | 0.275 | the pair renamed EURUSD (IRON-02) |
-| C4 | violation | 0.491 | 0.420 | a flat RRR (IRON-04) |
-| C5 | clean | 0.563 | 0.671 | SL = zone edge − buffer (conformant) |
-| C6 | clean | 0.477 | 0.430 | ONE TP at the nearest zone |
-| C7 | clean | 0.252 | 0.372 | E1→E2→E3 linear |
-| C8 | clean | 0.497 | 0.415 | the canon constants, unchanged |
+| C1 | violation | 0.614 | 0.655 | |
+| C2 | violation | 0.509 | 0.563 | |
+| C3 | violation | 0.232 | 0.290 | |
+| C4 | violation | 0.491 | 0.420 | |
+| C5 | clean | 0.563 | 0.671 | |
+| C6 | clean | 0.523 | 0.564 | |
+| C7 | clean | 0.230 | 0.369 | |
+| C8 | clean | 0.497 | 0.415 | |
+
 
 ## THE THREE DEFECTS THE CALIBRATION FOUND (and the fixes)
 

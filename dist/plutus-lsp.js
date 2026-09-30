@@ -249,8 +249,8 @@ function buildState(target, laws, hunk) {
   ].join(`
 `);
 }
-var THROW_T = 0.85;
-var DEMAND_T = 0.5;
+var THROW_T = Number(process.env.PLUTUS_THROW_T ?? 0.85);
+var DEMAND_T = Number(process.env.PLUTUS_DEMAND_T ?? 0.3);
 var DECIDING = ["P4", "P5", "P6"];
 function verdict(v) {
   if (!v.ok)
@@ -264,12 +264,12 @@ function verdict(v) {
   const wrong = answered.map((id) => a[id]);
   const minWrong = Math.min(...wrong);
   const weakest = answered[wrong.indexOf(minWrong)] ?? null;
-  const p7 = a.P7 ?? 0;
-  const immutable = (a.P3 ?? 0) >= DEMAND_T;
+  const p7 = a.P7;
+  const immutable = a.P3 !== undefined && a.P3 >= DEMAND_T;
   const throwBar = immutable ? THROW_T * 0.9 : THROW_T;
   if (minWrong >= throwBar)
     return { kind: "VIOLATION", weakest, vector: a };
-  if (p7 >= THROW_T)
+  if (p7 !== undefined && p7 >= THROW_T)
     return { kind: "DRIFT", weakest: "P7", vector: a };
   if (minWrong >= DEMAND_T)
     return { kind: "SUSPECT", weakest, vector: a };
@@ -301,7 +301,7 @@ function lawCard(target, laws) {
 }
 function verdictCard(target, v, laws) {
   const pct = (n) => typeof n === "number" ? n.toFixed(3) : "n/a";
-  if (v.kind !== "LAW" && v.kind !== "JUDGE_DOWN" && laws.length === 0)
+  if (v.kind !== "LAW" && v.kind !== "JUDGE_DOWN" && v.kind !== "INCONCLUSIVE" && laws.length === 0)
     return null;
   if (v.kind === "JUDGE_DOWN") {
     return {
@@ -313,9 +313,22 @@ function verdictCard(target, v, laws) {
       total: 0
     };
   }
+  if (v.kind === "INCONCLUSIVE") {
+    return {
+      shape: "SUSPECT",
+      title: `INCONCLUSIVE \u2014 the judge could not reach a verdict (weakest: ${v.weakest ?? "none"})`,
+      rows: [
+        `the unanswered/undecided clause: ${v.weakest ?? "(no deciding clause answered)"}`,
+        `vector: ${Object.entries(v.vector).map(([k, n]) => `${k}=${Number(n).toFixed(3)}`).join(" ") || "(empty)"}`
+      ],
+      severity: SEVERITY.Hint,
+      source: "plutus/suspect",
+      total: 1
+    };
+  }
   if (v.kind === "LAW")
     return null;
-  if (v.kind !== "VIOLATION" && v.kind !== "DRIFT" && v.kind !== "SUSPECT")
+  if (v.kind !== "VIOLATION" && v.kind !== "DRIFT" && v.kind !== "SUSPECT" && v.kind !== "INCONCLUSIVE")
     return null;
   const law = v.weakest && v.weakest !== "P7" ? laws.find((l) => l.tier === "IMMUTABLE") ?? laws[0] : laws[0] ?? laws.find((l) => l.tier === "IMMUTABLE");
   if (!law)
@@ -394,14 +407,14 @@ function fileCards(target, laws, v) {
 }
 
 // scripts/plutus-lsp.ts
-var RECEIPT = process.env.PLUTUS_LSP_RECEIPT ?? "/tmp/plutus-lsp-receipts.log";
+var RECEIPT = process.env.PLUTUS_LSP_RECEIPT ?? "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/forensic/lsp-receipts.log";
 var receipt = (line) => {
   try {
     appendFileSync(RECEIPT, `${new Date().toISOString()} ${clean(line)}
 `);
   } catch {}
 };
-var LOG = process.env.PLUTUS_LSP_LOG ?? "/tmp/plutus-lsp-stderr.log";
+var LOG = process.env.PLUTUS_LSP_LOG ?? "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/forensic/lsp-stderr.log";
 var clean = (m) => m.replace(/[\r\n]+/g, " ");
 var log = (m) => {
   try {

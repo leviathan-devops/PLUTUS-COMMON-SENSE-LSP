@@ -16,10 +16,12 @@ import { loadStore, lawsForFile, declarationsIn } from "../src/plutus-lsp/store.
 import { chain, verdict, buildState } from "../src/plutus-lsp/judge.ts";
 import { fileCards, toDiagnostic, PLUTUS_LSP_TOKENS } from "../src/plutus-lsp/cards.ts";
 
-const RECEIPT = process.env.PLUTUS_LSP_RECEIPT ?? "/tmp/plutus-lsp-receipts.log";
+// FIX F4 (audit-alpha): the receipt MUST be durable — /tmp is ephemeral and the spawn
+// proof was irreproducible. Default: the repo's forensic/ dir (an env override allowed).
+const RECEIPT = process.env.PLUTUS_LSP_RECEIPT ?? "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/forensic/lsp-receipts.log";
 const receipt = (line: string) => { try { appendFileSync(RECEIPT, `${new Date().toISOString()} ${clean(line)}\n`); } catch {} };
 
-const LOG = process.env.PLUTUS_LSP_LOG ?? "/tmp/plutus-lsp-stderr.log";
+const LOG = process.env.PLUTUS_LSP_LOG ?? "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/forensic/lsp-stderr.log";
 // FIX (audit:22): strip CR/LF so a crafted URI cannot forge a receipt line
 const clean = (m: string) => m.replace(/[\r\n]+/g, " ");
 const log = (m: string) => { try { appendFileSync(LOG, `${new Date().toISOString()} ${clean(m)}\n`); } catch {} };

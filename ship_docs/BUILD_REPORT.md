@@ -1,6 +1,6 @@
 # BUILD_REPORT — PLUTUS-COMMON-SENSE-LSP (the what-was-built record)
 
-**Date:** 2026-09-29 · **The repo:** PLUTUS-COMMON-SENSE-LSP (own .git) · **The commits:** f4b9260, 5154527, 8260183
+**Date:** 2026-09-29 · **The repo:** PLUTUS-COMMON-SENSE-LSP (own .git) · **The commits (HEAD at the audit):** a1d4342 + the audit's follow-ups; the earlier: f4b9260, 5154527, 8260183 (audit F13: the record named a stale prefix)
 
 ## §1 · WHAT WAS BUILT (the deliverable)
 A third custom LSP server, `plutus-lsp`, that makes the Plutus knowledge graphs REFLEXIVE:
@@ -11,10 +11,10 @@ diagnostic — before the agent can derail. It INFORMS; it never blocks (the pol
 ## §2 · THE FILES (the deployed set)
 | the file | the role | the lines |
 |---|---|---|
-| `scripts/plutus-lsp.ts` | the stdio JSON-RPC server + --selftest + the receipt | ~150 |
-| `src/plutus-lsp/store.ts` | the graph reader (L1 kg.json + L2 socket) + the named refusals | ~190 |
-| `src/plutus-lsp/judge.ts` | CH-PLUTUS (the 7 nouls) + OBSERVABLE + the verdict | ~150 |
-| `src/plutus-lsp/cards.ts` | the 7 tokens + FactCard + toDiagnostic | ~130 |
+| `scripts/plutus-lsp.ts` | the stdio JSON-RPC server + --selftest + the receipt | 168 (measured, audit F8) |
+| `src/plutus-lsp/store.ts` | the graph reader (L1 kg.json + L2 socket) + the named refusals | 266 (measured) |
+| `src/plutus-lsp/judge.ts` | CH-PLUTUS (the 7 nouls) + OBSERVABLE + the verdict | 207 (measured) |
+| `src/plutus-lsp/cards.ts` | the 7 tokens + FactCard + toDiagnostic | 166 (measured) |
 | `tests/*.test.ts` | the W1/W2/W3 gates + the 8-angle adversarial sweep | ~180 |
 | `tests/calibration/*` | the labeled corpus + the derivation harness | ~90 |
 | `~/.omp/agent/lsp.json` | the registration (beside gi-lsp + jg-lsp) | 1 entry |
