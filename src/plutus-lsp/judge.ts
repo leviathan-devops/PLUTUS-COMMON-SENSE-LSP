@@ -126,8 +126,14 @@ export function buildState(target: string, laws: LawEntity[], hunk: string): str
  * calibration's top score was 0.61 — an Error at 0.30 would fire on half the
  * cleans). Env-overridable so a re-calibration can retune without a rebuild.
  */
-export const THROW_T = Number(process.env.PLUTUS_THROW_T ?? 0.85);   // the VIOLATION bar (policy)
-export const DEMAND_T = Number(process.env.PLUTUS_DEMAND_T ?? 0.30); // the SUSPECT bar (DERIVED)
+// FIX F10 (audit-bravo): an env override must be VALIDATED — an empty string parses to 0 and
+// garbage to NaN, both fail-open. A valid override is a finite number in (0,1).
+const bar = (raw: string | undefined, dflt: number): number => {
+  const n = Number(raw);
+  return raw !== undefined && Number.isFinite(n) && n > 0 && n < 1 ? n : dflt;
+};
+export const THROW_T = bar(process.env.PLUTUS_THROW_T, 0.85);   // the VIOLATION bar (policy)
+export const DEMAND_T = bar(process.env.PLUTUS_DEMAND_T, 0.30); // the SUSPECT bar (DERIVED)
 
 export interface Verdict {
   kind: "VIOLATION" | "SUSPECT" | "DRIFT" | "LAW" | "INCONCLUSIVE" | "JUDGE_DOWN";
@@ -137,10 +143,12 @@ export interface Verdict {
 }
 
 /**
- * THE VERDICT — pure code. FIX (audit judge.ts:118): the DECIDING clauses are the WRONGNESS set
- * {P4 VIOLATE, P5 CONTRACT, P6 ANTIPATTERN} plus P7 DRIFT; the INFORMING clauses are
- * {P1 SCOPE, P2 LAW, P3 TIER}. The wrongness = min over the deciding clauses (the weakest clause,
- * never an average). P1/P2 guard: out-of-scope or lawless evidence yields NO wrongness verdict.
+ * THE VERDICT — pure code. The DECIDING clauses are the WRONGNESS set {P4 VIOLATE, P5 CONTRACT,
+ * P6 ANTIPATTERN} plus P7 DRIFT; the INFORMING clauses are {P1 SCOPE, P2 LAW, P3 TIER}.
+ * The wrongness = min over the ANSWERED deciding clauses (the weakest clause, never an average).
+ * THE GUARD (F8: the docstring now matches the body): P2 LAW is the jurisdiction gate — a low
+ * P2 yields INCONCLUSIVE. P1 is recorded in the vector but does NOT block (the container S5:
+ * jurisdiction comes from the LAWS, not the model's path read).
  */
 export const DECIDING: NodeId[] = ["P4", "P5", "P6"];
 export function verdict(v: JudgeVector): Verdict {

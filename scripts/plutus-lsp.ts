@@ -12,14 +12,15 @@
  */
 
 import { readFileSync, appendFileSync } from "node:fs";
-import { loadStore, lawsForFile, declarationsIn } from "../src/plutus-lsp/store.ts";   // FIX (audit:15) dead imports removed
-import { chain, verdict, buildState } from "../src/plutus-lsp/judge.ts";
+import { loadStore, lawsForHunk, declarationsIn, callersOf } from "../src/plutus-lsp/store.ts";
+import { chain, verdict, buildState, observableQuestion } from "../src/plutus-lsp/judge.ts";
 import { fileCards, toDiagnostic, PLUTUS_LSP_TOKENS } from "../src/plutus-lsp/cards.ts";
 
 // FIX F4 (audit-alpha): the receipt MUST be durable — /tmp is ephemeral and the spawn
 // proof was irreproducible. Default: the repo's forensic/ dir (an env override allowed).
 const RECEIPT = process.env.PLUTUS_LSP_RECEIPT ?? "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/forensic/lsp-receipts.log";
-const receipt = (line: string) => { try { appendFileSync(RECEIPT, `${new Date().toISOString()} ${clean(line)}\n`); } catch {} };
+// FIX F11 (audit-bravo): a bare catch{} swallows the failure. The receipt failure goes to stderr.
+const receipt = (line: string) => { try { appendFileSync(RECEIPT, `${new Date().toISOString()} ${clean(line)}\n`); } catch (e) { try { process.stderr.write(`RECEIPT_WRITE_FAIL: ${(e as Error).message}\n`); } catch {} } };
 
 const LOG = process.env.PLUTUS_LSP_LOG ?? "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/forensic/lsp-stderr.log";
 // FIX (audit:22): strip CR/LF so a crafted URI cannot forge a receipt line
@@ -39,18 +40,23 @@ export async function pipeline(file: string, source: string, useJudge = true): P
     return { tokens: [], cards: [], refused: msg, vector: {} };
   }
   const decls = declarationsIn(source);
-  const all = lawsForFile(store, file, decls);
+  const hunk = source.slice(0, 1200);
+  // FIX F1+F2 (audit-bravo): the PRODUCTION pipeline is now EXACTLY the CALIBRATED pipeline —
+  // lawsForHunk (ranked top-3) + observableQuestion + ALL 7 nodes. The calibration's numbers
+  // now describe the thing that ships.
+  const all = lawsForHunk(store, file, decls, hunk, 3);
   if (all.length === 0) { receipt(`NO-LAW file=${file} decls=${decls.length}`); return { tokens: [], cards: [], refused: null, vector: {} }; }
 
   let v = null;
   let vector: Record<string, number> = {};
   if (useJudge) {
-    const hunk = source.slice(0, 1200);
-    const res = await chain(buildState(file, all, hunk), ["P1", "P2", "P3", "P4", "P7"]);
+    // FIX F1: ALL 7 nodes — the DECIDING set [P4,P5,P6] is now actually answered.
+    // FIX F2: the observable question (the calibration's configuration).
+    const res = await chain(buildState(file, all, hunk), ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], 6000, observableQuestion(all));
     v = verdict(res);
     vector = Object.fromEntries(Object.entries(res.answers).map(([k, n]) => [k, Number(n)]));
   }
-  const cards = fileCards(file, all, v);
+  const cards = fileCards(file, all, v, callersOf(store, file));   // FIX F4: the callers read
   const tokens = [...new Set(cards.map((c) => c.source))];
   receipt(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
   return { tokens, cards, refused: null, vector };
@@ -121,7 +127,7 @@ if (process.argv.includes("--stdio")) {
       const body = buf.subarray(head + 4, head + 4 + n).toString("utf8");
       buf = buf.subarray(head + 4 + n);
       let msg: { id?: number; method?: string; params?: Record<string, unknown> } | null = null;
-      try { msg = JSON.parse(body); } catch { continue; }
+      try { msg = JSON.parse(body); } catch (e) { log(`FRAME_PARSE_FAIL: ${(e as Error).message}`); continue; }   // FIX F11
       if (!msg) continue;
       receipt(`FRAME ${msg.method ?? "?"}`);
       if (msg.method === "initialize") {

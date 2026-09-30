@@ -1,0 +1,29 @@
+{
+  "corpus": "the labeled control set — DERIVE the bars, never assume them",
+  "items": [
+    { "id": "C1", "label": "violation", "file": "mirror.ts",
+      "hunk": "export function computeMirrorSL() { const sl = 200; /* 200 pips, cap is 150 */ }",
+      "why": "SL 200 exceeds the 150-pip cap (IRON/D17)" },
+    { "id": "C2", "label": "violation", "file": "trade-computer.ts",
+      "hunk": "const tp1 = 1.1; const tp2 = 1.2; const tp3 = 1.3; // three TPs",
+      "why": "IRON-03: ONE TP per trade, no TP1/TP2/TP3" },
+    { "id": "C3", "label": "violation", "file": "zone-model.ts",
+      "hunk": "if (pair === 'EURUSD') { /* renamed the pair */ }",
+      "why": "IRON-02: the pair format is 'EUR/USD' with slashes" },
+    { "id": "C4", "label": "violation", "file": "engine3.ts",
+      "hunk": "const rrr = 1.0; // flat RRR for every category",
+      "why": "IRON-04: RRR is category-specific via rrrForCategory(), never flat" },
+    { "id": "C5", "label": "clean", "file": "mirror.ts",
+      "hunk": "export function computeMirrorSL(zone: Zone) { return zone.bottom - 2.5 * PIP; }",
+      "why": "SL = the zone edge minus the buffer — the law-conformant shape" },
+    { "id": "C6", "label": "clean", "file": "trade-computer.ts",
+      "hunk": "const tp = nearestOpposingZoneFrontEdge(zones); return { entry, sl, tp };",
+      "why": "ONE TP at the nearest opposing zone's front edge" },
+    { "id": "C7", "label": "clean", "file": "pipeline.ts",
+      "hunk": "const e1 = await engine1(bars); const e2 = await engine2(e1); const e3 = await engine3(e2);",
+      "why": "E1->E2->E3 linear, each building on the prior" },
+    { "id": "C8", "label": "clean", "file": "constants.ts",
+      "hunk": "export const ZFP_THRESHOLD = 45; export const SL_CAP_PIPS = 150;",
+      "why": "the canon constants, unchanged" }
+  ]
+}

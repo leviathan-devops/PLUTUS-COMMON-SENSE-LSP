@@ -264,3 +264,18 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
   // FIX (audit store.ts:220): a ZERO-overlap law is not a candidate — return [] (no arbitrary pick)
   return scored.filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, topK).map((x) => x.l);
 }
+
+/**
+ * FIX F4 (audit-bravo): `plutus/callers` was DECLARED, NEVER EMITTED (a theatrical token).
+ * The L1 kg.json carries the `imports` relationships — the caller set is a REAL read:
+ * every file whose `imports` edge targets this file.
+ */
+export function callersOf(store: Store, filePath: string): string[] {
+  const base = (filePath.split(/[\\/]/).pop() ?? "");
+  if (!base) return [];
+  const hits = store.relationships.filter((r) => {
+    const t = String(r.target ?? "");
+    return r.type === "imports" && (t === base || t.endsWith(`/${base}`) || t.includes(base));
+  });
+  return [...new Set(hits.map((r) => String(r.source ?? "")))].slice(0, 20);
+}

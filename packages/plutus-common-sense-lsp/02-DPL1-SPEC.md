@@ -187,3 +187,16 @@ NEW: `src/plutus-lsp/{store,judge,cards}.ts` · `scripts/plutus-lsp.ts` · `test
 The 6 rig angles (A1–A6) in a container: the graph mounted read-only, the judge a stub then live,
 the receipt log captured. Phase E: the deploy sha match + the auth probe + every token asserted.
 **HANDOFF:** this DPL1 → the build waves (06-WAVES); the build agent entry is `scripts/plutus-lsp.ts`.
+
+
+---
+## §Z · THE IMPLEMENTED REALITY (post-audit, 2026-09-30) — the spec/code reconciliation
+**The audit (bravo F15) found the spec and the code disagreed. The resolution, with the reasons:**
+| the spec said | the code does | why |
+|---|---|---|
+| D1: P4 alone gates; P5–P7 inform | **min over the ANSWERED deciding clauses [P4,P5,P6]** | the weakest-clause law (a wrongness verdict must not average away a contract breach) |
+| D3: the bars 0.85/0.50 | **0.85 / 0.30** | DEMAND_T is the CALIBRATION's DERIVED bar (0.30, the tie-break rule documented in CALIBRATION_v1) |
+| D2: the file types .ts + .md | **.ts, .tsx, .js, .md** | the registration's fileTypes (a TS project's .tsx/.js included) |
+| S5/S7/S8: no asserting test | **S5 (the receipt) proven in the container; S7 the registration asserted; S8 the no-eviction asserted** | the audit's F1-S1 test added; the container artifacts carry S5 |
+**THE RULE:** where this section and the body disagree, THIS section is the implemented truth — the
+body is the PLANNING intent, retained as the record.

@@ -19,7 +19,7 @@ export const PLUTUS_LSP_TOKENS = [
   "plutus/stale",
 ] as const;
 export type PlutusLspToken = (typeof PLUTUS_LSP_TOKENS)[number];
-/** DECLARED, NOT YET EMITTED (audit cards.ts:12): `plutus/callers` awaits the ripwire read (T7). */
+/** FIX F4 (audit-bravo): `plutus/callers` IS NOW EMITTED — see callersCard() below. */
 
 export const SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 } as const;
 type Sev = (typeof SEVERITY)[keyof typeof SEVERITY];
@@ -57,7 +57,7 @@ export function verdictCard(target: string, v: Verdict, laws: LawEntity[]): Fact
       rows: [v.reason ?? "JEVK5_DOWN"],
       severity: SEVERITY.Warning,
       source: "plutus/stale",
-      total: 0,   // FIX (audit cards.ts:53): the stale condition is ONE measured fact
+      total: 1,   // FIX F7 (audit-bravo): the ONE-fact comment said 1 while the value said 0
     };
   }
   // FIX C (the audit: an INCONCLUSIVE verdict emitted ZERO cards — a SILENT pass).
@@ -154,11 +154,25 @@ export function toDiagnostic(card: FactCard, range?: { line: number; character: 
   };
 }
 
+/** FIX F4 (audit-bravo): the CALLERS card — a REAL read (the L1 import edges), never a promise. */
+export function callersCard(target: string, callers: string[]): FactCard | null {
+  if (callers.length === 0) return null;   // the anti-phantom law
+  return {
+    shape: "CALLERS",
+    title: `${callers.length} file(s) import this one — a change here reaches them`,
+    rows: callers.slice(0, 6),
+    severity: SEVERITY.Information,
+    source: "plutus/callers",
+    total: callers.length,
+  };
+}
+
 /** The full file pipeline: laws → cards (the L1 detect + L3 enforce). */
-export function fileCards(target: string, laws: LawEntity[], v: Verdict | null): FactCard[] {
+export function fileCards(target: string, laws: LawEntity[], v: Verdict | null, callers: string[] = []): FactCard[] {
   const out: FactCard[] = [];
   const lc = lawCard(target, laws); if (lc) out.push(lc);
   const tc = tierCard(laws); if (tc) out.push(tc);
+  const cc = callersCard(target, callers); if (cc) out.push(cc);   // FIX F4
   if (v) { const vc = verdictCard(target, v, laws); if (vc) out.push(vc); }
   return out;
 }

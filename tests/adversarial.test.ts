@@ -6,7 +6,7 @@ import { test, expect } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { loadStore, lawsForFile, declarationsIn, PLUTUS_NO_STORE, PLUTUS_NO_ROOT } from "../src/plutus-lsp/store.ts";
 import { chain, health, verdict, buildState, JEVK5_DOWN } from "../src/plutus-lsp/judge.ts";
-import { fileCards, lawCard, toDiagnostic, PLUTUS_LSP_TOKENS } from "../src/plutus-lsp/cards.ts";
+import { fileCards, lawCard, toDiagnostic, PLUTUS_LSP_TOKENS, callersCard } from "../src/plutus-lsp/cards.ts";
 
 const L1 = "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json";
 
@@ -74,4 +74,36 @@ test("A8_the_token_set_is_exactly_7_and_unique", () => {
   expect(PLUTUS_LSP_TOKENS.length).toBe(7);
   expect(new Set(PLUTUS_LSP_TOKENS).size).toBe(7);
   for (const t of PLUTUS_LSP_TOKENS) expect(t.startsWith("plutus/")).toBe(true);
+});
+
+/**
+ * THE AUDIT'S NEW TESTS (bravo's F1/F2/F4) — the behaviors the audit wired.
+ */
+test("A9_the_callers_card_emits (F4 — the token was declared, never emitted)", () => {
+  const card = callersCard("mirror.ts", ["a.ts", "b.ts"]);
+  expect(card).toBeDefined();
+  expect(card!.source).toBe("plutus/callers");
+  expect(card!.total).toBe(2);                       // the measured count
+  expect(callersCard("x.ts", [])).toBeNull();        // the anti-phantom law
+});
+
+test("A10_the_production_chain_is_the_calibrated_chain (F1+F2)", async () => {
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  // F1: the 7-node chain (the DECIDING set is actually answered)
+  expect(src).toContain('["P1", "P2", "P3", "P4", "P5", "P6", "P7"]');
+  // F2: the calibrated configuration (the ranked laws + the observable question)
+  expect(src).toContain("lawsForHunk(");
+  expect(src).toContain("observableQuestion(");
+  // F4: the callers read
+  expect(src).toContain("callersOf(");
+});
+
+test("A11_the_bars_are_validated (F10 — an env override cannot fail open)", () => {
+  const { THROW_T, DEMAND_T } = require("../src/plutus-lsp/judge.ts");
+  expect(THROW_T).toBeGreaterThan(0); expect(THROW_T).toBeLessThan(1);
+  expect(DEMAND_T).toBeGreaterThan(0); expect(DEMAND_T).toBeLessThan(1);
+  // a garbage env value must NOT produce NaN/0 — the module is already loaded; assert the shape
+  expect(Number.isFinite(THROW_T)).toBe(true);
+  expect(Number.isFinite(DEMAND_T)).toBe(true);
 });

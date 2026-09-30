@@ -158,6 +158,29 @@ function lawsForFile(store, filePath, decls) {
   }
   return out;
 }
+function lawsForHunk(store, filePath, decls, hunk, topK = 3) {
+  const candidates = lawsForFile(store, filePath, decls);
+  if (candidates.length <= topK)
+    return candidates;
+  const ht = new Set(tokensOf(hunk));
+  const scored = candidates.map((l) => {
+    const lt = tokensOf(`${l.name} ${l.statement}`);
+    const overlap = lt.filter((t) => ht.has(t)).length;
+    const nums = (hunk.match(/\d+(?:\.\d+)?/g) ?? []).filter((n) => l.statement.includes(n)).length;
+    return { l, score: overlap * 2 + nums * 3 };
+  });
+  return scored.filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, topK).map((x) => x.l);
+}
+function callersOf(store, filePath) {
+  const base = filePath.split(/[\\/]/).pop() ?? "";
+  if (!base)
+    return [];
+  const hits = store.relationships.filter((r) => {
+    const t = String(r.target ?? "");
+    return r.type === "imports" && (t === base || t.endsWith(`/${base}`) || t.includes(base));
+  });
+  return [...new Set(hits.map((r) => String(r.source ?? "")))].slice(0, 20);
+}
 
 // src/plutus-lsp/judge.ts
 var JEVK5_URL_DEFAULT = "http://127.0.0.1:8090/v1/systemone";
@@ -249,8 +272,12 @@ function buildState(target, laws, hunk) {
   ].join(`
 `);
 }
-var THROW_T = Number(process.env.PLUTUS_THROW_T ?? 0.85);
-var DEMAND_T = Number(process.env.PLUTUS_DEMAND_T ?? 0.3);
+var bar = (raw, dflt) => {
+  const n = Number(raw);
+  return raw !== undefined && Number.isFinite(n) && n > 0 && n < 1 ? n : dflt;
+};
+var THROW_T = bar(process.env.PLUTUS_THROW_T, 0.85);
+var DEMAND_T = bar(process.env.PLUTUS_DEMAND_T, 0.3);
 var DECIDING = ["P4", "P5", "P6"];
 function verdict(v) {
   if (!v.ok)
@@ -274,6 +301,42 @@ function verdict(v) {
   if (minWrong >= DEMAND_T)
     return { kind: "SUSPECT", weakest, vector: a };
   return { kind: "LAW", weakest: null, vector: a };
+}
+var OBSERVABLE = [
+  {
+    match: /stop-?loss|sl cap|150 ?pip|sl_?cap/i,
+    q: "Does the evidence state a stop-loss value GREATER than 150 pips? (150 is the cap; read the number)"
+  },
+  {
+    match: /one tp|tp1|take-?profit|single tp/i,
+    q: "Does the evidence define MORE THAN ONE take-profit target (a TP1, TP2, or TP3)?"
+  },
+  {
+    match: /pair format|EUR\/USD|slashes/i,
+    q: "Does the evidence use a pair name WITHOUT the slash separator (e.g. EURUSD instead of EUR/USD)?"
+  },
+  {
+    match: /rrr|risk-?reward|category-specific/i,
+    q: "Does the evidence set a FLAT risk-reward ratio (the same value for every category)?"
+  },
+  {
+    match: /zfp|threshold/i,
+    q: "Does the evidence change the ZFP threshold away from 45?"
+  }
+];
+function observableQuestion(laws) {
+  let best = null;
+  for (const l of laws) {
+    const hay = `${l.name} ${l.statement}`;
+    for (const t of OBSERVABLE) {
+      if (t.match.test(hay)) {
+        const score = (t.q.toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((w) => hay.toLowerCase().includes(w)).length;
+        if (!best || score > best.score)
+          best = { q: t.q, score };
+      }
+    }
+  }
+  return best?.q ?? CHAIN.P4.q;
 }
 
 // src/plutus-lsp/cards.ts
@@ -310,7 +373,7 @@ function verdictCard(target, v, laws) {
       rows: [v.reason ?? "JEVK5_DOWN"],
       severity: SEVERITY.Warning,
       source: "plutus/stale",
-      total: 0
+      total: 1
     };
   }
   if (v.kind === "INCONCLUSIVE") {
@@ -390,7 +453,19 @@ ${card.rows.join(`
 `)}`
   };
 }
-function fileCards(target, laws, v) {
+function callersCard(target, callers) {
+  if (callers.length === 0)
+    return null;
+  return {
+    shape: "CALLERS",
+    title: `${callers.length} file(s) import this one \u2014 a change here reaches them`,
+    rows: callers.slice(0, 6),
+    severity: SEVERITY.Information,
+    source: "plutus/callers",
+    total: callers.length
+  };
+}
+function fileCards(target, laws, v, callers = []) {
   const out = [];
   const lc = lawCard(target, laws);
   if (lc)
@@ -398,6 +473,9 @@ function fileCards(target, laws, v) {
   const tc = tierCard(laws);
   if (tc)
     out.push(tc);
+  const cc = callersCard(target, callers);
+  if (cc)
+    out.push(cc);
   if (v) {
     const vc = verdictCard(target, v, laws);
     if (vc)
@@ -412,7 +490,12 @@ var receipt = (line) => {
   try {
     appendFileSync(RECEIPT, `${new Date().toISOString()} ${clean(line)}
 `);
-  } catch {}
+  } catch (e) {
+    try {
+      process.stderr.write(`RECEIPT_WRITE_FAIL: ${e.message}
+`);
+    } catch {}
+  }
 };
 var LOG = process.env.PLUTUS_LSP_LOG ?? "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/forensic/lsp-stderr.log";
 var clean = (m) => m.replace(/[\r\n]+/g, " ");
@@ -432,7 +515,8 @@ async function pipeline(file, source, useJudge = true) {
     return { tokens: [], cards: [], refused: msg, vector: {} };
   }
   const decls = declarationsIn(source);
-  const all = lawsForFile(store, file, decls);
+  const hunk = source.slice(0, 1200);
+  const all = lawsForHunk(store, file, decls, hunk, 3);
   if (all.length === 0) {
     receipt(`NO-LAW file=${file} decls=${decls.length}`);
     return { tokens: [], cards: [], refused: null, vector: {} };
@@ -440,12 +524,11 @@ async function pipeline(file, source, useJudge = true) {
   let v = null;
   let vector = {};
   if (useJudge) {
-    const hunk = source.slice(0, 1200);
-    const res = await chain(buildState(file, all, hunk), ["P1", "P2", "P3", "P4", "P7"]);
+    const res = await chain(buildState(file, all, hunk), ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], 6000, observableQuestion(all));
     v = verdict(res);
     vector = Object.fromEntries(Object.entries(res.answers).map(([k, n]) => [k, Number(n)]));
   }
-  const cards = fileCards(file, all, v);
+  const cards = fileCards(file, all, v, callersOf(store, file));
   const tokens = [...new Set(cards.map((c) => c.source))];
   receipt(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
   return { tokens, cards, refused: null, vector };
@@ -544,7 +627,8 @@ ${j}`);
       let msg = null;
       try {
         msg = JSON.parse(body);
-      } catch {
+      } catch (e) {
+        log(`FRAME_PARSE_FAIL: ${e.message}`);
         continue;
       }
       if (!msg)
