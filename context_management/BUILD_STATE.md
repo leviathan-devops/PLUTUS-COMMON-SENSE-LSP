@@ -39,3 +39,5 @@ bun test v1.4.2 (744846f84) -> **59 pass / 0 fail / 199 expects**
 
 ## SHA CHAIN (latest)
 - f45727589b05caba (the security-hardened, scope-gated bundle)
+
+Dist fingerprint (2026-10-02): `f45727589b05caba4894455f65e4ee34647ac665c38223aeb033ae9fb5ee0bfc`

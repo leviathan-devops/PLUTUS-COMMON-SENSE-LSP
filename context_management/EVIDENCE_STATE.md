@@ -62,4 +62,6 @@ Dist fingerprint (2026-10-01): `3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108
 - scope gate 7/7 (configurable: PLUTUS_LSP_SCOPE / _FILES)
 - noise ratio 0.00 (was 2.0)
 - 4 audit rounds (r19 README-flaw, r20 reviewer, r21+r22 reviewer, r23 security): 56 findings, ALL fixed
-- dist fingerprint: 
+- dist fingerprint:
+
+Dist fingerprint (2026-10-02): `f45727589b05caba4894455f65e4ee34647ac665c38223aeb033ae9fb5ee0bfc`
