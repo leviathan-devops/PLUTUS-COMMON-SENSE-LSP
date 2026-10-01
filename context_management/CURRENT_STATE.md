@@ -1,6 +1,6 @@
 # CURRENT_STATE — PLUTUS-COMMON-SENSE-LSP
 
-**As of:** 2026-09-30 · **The phase:** post-round-10 (commit 816b384; ship-docs pass committed; audit lane BLOCKED).
+**As of:** 2026-10-01 · **The phase:** post-round-18 (the audit lane recovered; 8 rounds run; battery 46/0; the derailment suite 6/6; gate FAIL r18).
 
 ## THE ARCHITECTURE AS IT NOW IS
 ```
@@ -25,14 +25,14 @@ publishDiagnostics -> the canon arrives on the write (the REFLEX)
 The LSP INFORMS; the extension ENFORCES. A block path in the server is a VIOLATION.
 
 ## THE CURRENT NUMBERS
-- the battery: 26 pass / 0 fail / 117 expects (3 files)
+- the battery: 46 pass / 0 fail / 158 expects (3 files)
 - the live selftests ×4 (JevK5 jevk5-4b-v0.2-Q8_0): store 11 · judge 13 · script 12 · cards 13 (1 VIOLATION MECH-TOKEN-08 P6=0.868, target-file warning proven)
 - the receipt: `RELEVANCE judged=12/12 dropped=0` (forensic/lsp-receipts.log, 2026-09-30T17:46:57Z)
-- the bundle: dist/plutus-lsp.js 41,046 bytes · sha256 51f95e841cf6247f…
+- the bundle: dist/plutus-lsp.js sha256 3307a3b7a14d6f4b (rebuilt at every round)
 - the derived bar: 0.30 (F1 0.60 · P 0.50 · R 0.75) on the 8-item corpus
-- the audit gate: round-11 BLOCKED (provider :4097 refused; NOT a verdict)
+- the audit gate: rounds 11-18 run (r18 FAIL 1c/5h — NO ship-ready claim)
 
 ## WHAT IS NOT YET DONE
-The round-11 audit re-run (the lane is down — BLOCKED, not PASS).
+The r17/r18 medium/low residual (~19 findings, recorded — hunk-hot-path caching, decl regex, accounting).
 The live-TUI render proof (needs a session restart — the LSP binds at session construction).
 The enforcement extension (deferred to v2). The 50+ item calibration corpus.

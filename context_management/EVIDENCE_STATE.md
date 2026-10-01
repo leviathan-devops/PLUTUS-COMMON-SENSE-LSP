@@ -38,3 +38,12 @@ INIT pid=1466672
 FRAME initialize · FRAME initialized · FRAME textDocument/didOpen
 PUBLISH n=3 tokens=plutus/law,plutus/tier,plutus/suspect file=…/mirror.ts verdict=SUSPECT
 ```
+
+## THE ROUND-11..18 EVIDENCE
+| the evidence | the artifact |
+|---|---|
+| battery 46/0/158 | bun test v1.4.2 (744846f84) |
+| the 4 live selftests | store 11 · judge 13 · cards 13 · script 13 cards |
+| the derailment suite 6/6 |  (D5 VIOLATION, D6 silent) |
+| the bundle sha |  |
+| the audit trend | r11..r18 (r18 FAIL 1c/5h) |

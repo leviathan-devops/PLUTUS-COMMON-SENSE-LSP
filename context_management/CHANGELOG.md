@@ -23,3 +23,24 @@
   Round-11 audit BLOCKED (:4097 refused — reported as BLOCKED, never PASS).
 - `docs(ship)` — BUILD_REPORT §7 · DEBUG_LOG BUG-06..11 · TESTING_LOG round-10/11 · FAILURE_LOG
   F-04/F-05 · THEATRICALITY_LOG created (T-01..T-05, operator-caught 0).
+
+## 2026-10-01 · the round-11..18 hardening + the derailment suite
+- 8 consecutive qwen-code-audit rounds; 60+ findings adjudicated + fixed; battery 18 -> 46 tests.
+- The CRITICAL class eliminated (r11), re-introduced by fixes (r15/r17/r18), all closed.
+- PASS D1 the fabricated SL cap (the canon ceiling is 36 pip; the edit sets 150)
+      tokens=[plutus/law,plutus/suspect] passToken(plutus/law)=true failToken(SELFTEST OK)=false
+PASS D2 the multi-TP violation (the law: ONE TP; the edit defines TP1/TP2/TP3)
+      tokens=[plutus/law,plutus/suspect] passToken(plutus/law)=true
+PASS D3 the pair-format violation (the law: EUR/USD; the edit uses EURUSD)
+      tokens=[plutus/law,plutus/suspect] passToken(plutus/law)=true
+PASS D4 the flat RRR (the law: category-specific; the edit sets one ratio)
+      tokens=[plutus/law,plutus/drift] passToken(plutus/law)=true
+PASS D5 the ZFP threshold change (the canon: 45; the edit sets 60)
+      tokens=[plutus/law,plutus/violation] passToken(plutus/law)=true
+PASS D6 a fact-free file — the LSP must stay SILENT (the precision proof)
+      tokens=[] passToken(NO-LAW)=true
+
+DERAILMENT SUITE: 6/6 PASS, 0 FAIL
+artifact: .omp/derailment-suite-results.json: 6 real derailments through the LIVE pipeline -> 6/6 PASS; the
+  fact-free case SILENT (the precision proof). Artifact .omp/derailment-suite-results.json.
+- Bundle dist/plutus-lsp.js sha256 3307a3b7a14d6f4b. THE GATE: r18 FAIL (1c/5h) — NO SHIP-READY CLAIM.

@@ -61,3 +61,13 @@
   defects, max width 76) — first in the PCSL series. Lifecycle + 4 module diagrams + call
   tree + file tree + 5-part runtime trace + 2 pseudocode + 2 bug boxes + numbers table.
 - THE BATTERY (re-confirmed this turn): 26 pass / 0 fail / 117 expects.
+
+## 2026-10-01 · the round-11..18 hardening drive + the derailment suite
+- THE AUDIT LANE RECOVERED (BUG-12 proxy restored) → 8 consecutive rounds: 60+ findings adjudicated
+  + fixed, battery 18 → 46 tests (0 fail), bundle rebuilt each round.
+- THE TREND (c/h): r9 2/12 · r10 2/10 · r11 0/13 · r12 0/12 · r13 0/7 · r14 0/5 · r15 1/2 · r16 0/4 · r17 2/3 · r18 1/5.
+  The CRITICAL class eliminated at r11, re-introduced by fixes at r15/r17/r18 (all closed).
+- THE DERAILMENT SUITE (scripts/derailment-suite.ts): 6 real Plutus derailments through the LIVE
+  pipeline → 6/6 PASS (D5 ZFP fires VIOLATION; D6 fact-free silent). Artifact .omp/derailment-suite-results.json.
+- THE BUNDLE: dist/plutus-lsp.js sha256 3307a3b7a14d6f4b.
+- THE GATE: r18 FAIL — NO SHIP-READY CLAIM (~19 medium/low residual, recorded).

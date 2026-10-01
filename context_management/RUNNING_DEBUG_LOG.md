@@ -54,3 +54,11 @@
   `node --check` clean → restart → `active`, `/healthz` ok, 4097/4098/8090 OPEN.
 - THE LESSON: a crash-looping unit's FIRST diagnostic is "does the ExecStart target exist" —
   before any theory about ports, keys, or providers.
+
+## BUG-13..17 · the confinement/exit edge-class (rounds 15-18)
+- BUG-13: exitFlushed `: never` satisfied by THROW → escaped the stdio handlers (exit 1). FIX: void + process.exit; the IIFE returns.
+- BUG-14: fileOf checked NORMALIZED but returned RAW (`/work/../etc` bypassed the denylist). FIX: return np.
+- BUG-15: the hand normalizer kept a leading `..` for absolute paths (`/../etc` defeated the denylist). FIX: path.resolve clamps at root.
+- BUG-16: stat-then-open TOCTOU on a FIFO (openSync blocks). FIX: O_NONBLOCK on the open.
+- BUG-17: the selftest failure paths fell through (top-level `return` illegal in ESM). FIX: an async IIFE with returns.
+- LESSON (all five): the confinement/exit/lifecycle edges are where a fix re-introduces a CRITICAL — each was self-inflicted, each pinned.

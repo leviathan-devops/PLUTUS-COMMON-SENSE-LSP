@@ -36,3 +36,12 @@ than silence. Evidence: targetFile threading, live proof `YOU ARE EDITING: src/p
 ## D-10 · BLOCKED IS NOT A VERDICT (found by round-11)
 A gate that cannot run has said nothing. "No new findings" from a dead lane is not "clean".
 Evidence: round-11 BLOCKED (:4097 refused) with 21 fixes already landed and verified locally.
+
+## D-11 · THE AUDIT COUNT IS NOT CONVERGENCE (rounds 11-18)
+The blocking count fell (13->12->7->5->2) while the fixes re-introduced CRITICALs (r15/r17/r18).
+The stop condition is CONFIRMED-DEFECTS-FIXED + CRITICAL-CLASS-ELIMINATED, never a zero count.
+Evidence: the trend + the three self-inflicted criticals.
+
+## D-12 · THE OBJECTIVE'S ACCEPTANCE TEST IS A DERAILMENT SUITE
+A green battery proves the MECHANISM; the objective ("the agent cannot derail") needs REAL
+derailments pushed through the pipeline. Evidence: scripts/derailment-suite.ts, 6/6 PASS.
