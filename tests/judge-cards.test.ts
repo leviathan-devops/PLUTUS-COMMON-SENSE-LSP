@@ -3,7 +3,7 @@
  * Both halves: the positive (the live judge answers 7) and the negative (a down judge is NAMED).
  */
 import { test, expect } from "bun:test";
-import { chain, verdict, buildState, health, JEVK5_DOWN, THROW_T, DEMAND_T } from "../src/plutus-lsp/judge.ts";
+import { chain, verdict, buildState, health, JEVK5_DOWN, throwT, demandT } from "../src/plutus-lsp/judge.ts";
 import { fileCards, lawCard, verdictCard, callersCard, PLUTUS_LSP_TOKENS, type JudgedLaw } from "../src/plutus-lsp/cards.ts";
 import type { LawEntity } from "../src/plutus-lsp/store.ts";
 
@@ -72,7 +72,10 @@ test("test_negative_no_phantom", () => {
 });
 
 test("test_verdict_thresholds", () => {
-  const v = (p4: number, p7 = 0) => verdict({ ok: true, answers: { P4: p4, P7: p7 }, requests: 1 });
+  // round-11 (H2 fail-closed jurisdiction): the real chain ALWAYS answers P2 (jurisdiction
+  // evidence). A vector without P2 is a caller-built partial → INCONCLUSIVE by design.
+  // The tests carry P2 like the real path does.
+  const v = (p4: number, p7 = 0) => verdict({ ok: true, answers: { P2: 0.9, P4: p4, P7: p7 }, requests: 1 });
   expect(v(0.9).kind).toBe("VIOLATION");
   expect(v(0.6).kind).toBe("SUSPECT");
   // FIX A (the audit): DEMAND_T is now the DERIVED bar (0.30, CALIBRATION_v1) — a 0.30
@@ -81,5 +84,7 @@ test("test_verdict_thresholds", () => {
   expect(v(0.2).kind).toBe("LAW");
   expect(v(0.1, 0.9).kind).toBe("DRIFT");
   expect(verdict({ ok: false, answers: {}, reason: JEVK5_DOWN, requests: 0 }).kind).toBe("JUDGE_DOWN");
-  expect(THROW_T).toBeGreaterThan(DEMAND_T);
+  // round-11: the frozen aliases are DELETED — the getters are the single source.
+  expect(throwT()).toBeGreaterThan(demandT());
+  expect(throwT()).toBe(0.85); expect(demandT()).toBe(0.3);
 });

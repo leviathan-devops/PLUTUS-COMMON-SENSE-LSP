@@ -44,6 +44,20 @@ var KNOWN_L1_PATHS = Object.freeze([
   "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json"
 ]);
 var L1_RESOLVED = new Map;
+function head4(p) {
+  try {
+    const fd = openSync(p, "r");
+    try {
+      const b = Buffer.alloc(4096);
+      const n = readSync(fd, b, 0, 4096, 0);
+      return `${n}:${b.subarray(0, n).toString("base64")}`;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
 function l1PathFor(root) {
   const env = process.env.PLUTUS_L1_PATH;
   if (env)
@@ -52,7 +66,7 @@ function l1PathFor(root) {
   try {
     const st = statSync(local);
     if (st.isFile()) {
-      L1_RESOLVED.set(root, { path: local, mtimeMs: st.mtimeMs, size: st.size });
+      L1_RESOLVED.set(root, { path: local, mtimeMs: st.mtimeMs, size: st.size, head: head4(local) });
       return local;
     }
   } catch {}
@@ -60,7 +74,7 @@ function l1PathFor(root) {
   if (hit) {
     try {
       const st = statSync(hit.path);
-      if (st.mtimeMs === hit.mtimeMs && st.size === hit.size)
+      if (st.mtimeMs === hit.mtimeMs && st.size === hit.size && head4(hit.path) === hit.head)
         return hit.path;
     } catch {}
     L1_RESOLVED.delete(root);
@@ -78,7 +92,7 @@ function l1PathFor(root) {
       try {
         const st = statSync(known);
         if (st.isFile()) {
-          L1_RESOLVED.set(root, { path: known, mtimeMs: st.mtimeMs, size: st.size });
+          L1_RESOLVED.set(root, { path: known, mtimeMs: st.mtimeMs, size: st.size, head: head4(known) });
           return known;
         }
       } catch {}
@@ -211,19 +225,7 @@ async function readL2(socketPath, timeoutMs = 800) {
       }
       if (total < need)
         return;
-      if (b.length > 32 * 1024 * 1024) {
-        finish({ ok: false, reason: `L2_OVERSIZE: ${b.length} bytes` });
-        return;
-      }
-      if (b.length < 4)
-        return;
-      const n = b.readUInt32BE(0);
-      if (n > 16 * 1024 * 1024) {
-        finish({ ok: false, reason: `L2_FRAME_TOO_LARGE: ${n} bytes` });
-        return;
-      }
-      if (b.length < 4 + n)
-        return;
+      const n = need - 4;
       clearTimeout(t);
       try {
         const j = JSON.parse(b.subarray(4, 4 + n).toString("utf8"));
@@ -362,14 +364,18 @@ function lawsForHunk(store, filePath, decls, hunk, topK = 3) {
   return scored.filter((x) => x.score > 0).sort((a, b) => b.score + w(b.l.tier) - (a.score + w(a.l.tier))).slice(0, topK).map((x) => x.l);
 }
 function callersOf(store, filePath) {
-  const base = filePath.split(/[\\/]/).pop() ?? "";
-  if (!base)
+  const norm = (p) => String(p ?? "").replace(/\\/g, "/").split("/").filter((s) => s.length > 0 && s !== ".").reduce((acc, s) => s === ".." ? (acc.pop(), acc) : [...acc, s], []).join("/");
+  const fp = norm(filePath);
+  if (!fp)
     return [];
+  const tail = fp.split("/").slice(-2).join("/");
   const hits = store.relationships.filter((r) => {
-    const t = String(r.target ?? "").replace(/\\/g, "/");
-    return r.type === "imports" && (t === base || t.endsWith(`/${base}`));
+    if (r.type !== "imports")
+      return false;
+    const t = norm(r.target);
+    return t === fp || t.endsWith(`/${tail}`);
   });
-  return [...new Set(hits.map((r) => String(r.source ?? "")).filter((x) => x.trim().length > 0))].slice(0, 20);
+  return [...new Set(hits.map((r) => String(r.source ?? "")).filter((x) => x.trim().length > 0))].sort().slice(0, 20);
 }
 
 // src/plutus-lsp/judge.ts
@@ -455,8 +461,8 @@ async function chain(state, nodes = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], 
   const h = await health();
   if (!h.ok)
     return { ok: false, answers: {}, reason: h.reason, requests: 0 };
-  const valid = deduped.filter((id) => (id in CHAIN));
-  const invalid = deduped.filter((id) => !(id in CHAIN));
+  const valid = deduped.filter((id) => Object.hasOwn(CHAIN, id));
+  const invalid = deduped.filter((id) => !Object.hasOwn(CHAIN, id));
   if (invalid.length > 0)
     receipt(`CHAIN invalid NodeId(s): ${invalid.join(",")} \u2014 filtered, never judged`);
   if (valid.length === 0)
@@ -480,6 +486,11 @@ async function chain(state, nodes = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], 
   return { ok: true, answers, requests: 1, latencyMs: res.value.latencyMs };
 }
 function buildState(target, laws, hunk) {
+  if (typeof target !== "string")
+    target = String(target ?? "(no target)");
+  if (typeof hunk !== "string")
+    hunk = "";
+  laws = Array.isArray(laws) ? laws.filter((l) => l && typeof l.name === "string" && typeof l.statement === "string") : [];
   const ordered = [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
   const kept = ordered.slice(0, 6);
   const lawText = kept.map((l) => `[${l.tier}] ${l.name}: ${l.statement} (anchor ${l.anchor})`).join(`
@@ -502,14 +513,12 @@ var bar = (raw, dflt) => {
 var throwT = () => bar(process.env.PLUTUS_THROW_T, 0.85);
 var demandT = () => bar(process.env.PLUTUS_DEMAND_T, 0.3);
 var relevanceT = () => bar(process.env.PLUTUS_RELEVANCE_T, 0.3);
-var THROW_T = throwT();
-var DEMAND_T = demandT();
 var DECIDING = ["P4", "P5", "P6"];
 function verdict(v) {
   if (!v.ok)
     return { kind: "JUDGE_DOWN", weakest: null, vector: {}, reason: v.reason };
   const a = v.answers;
-  if (a.P2 !== undefined && a.P2 < demandT())
+  if (a.P2 === undefined || a.P2 < demandT())
     return { kind: "INCONCLUSIVE", weakest: "P2", vector: a };
   const answered = DECIDING.filter((id) => a[id] !== undefined);
   if (answered.length === 0)
@@ -552,12 +561,15 @@ var OBSERVABLE = [
   }
 ];
 function observableQuestion(laws) {
+  const lawToks = (l) => new Set(`${l.name} ${l.statement}`.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 4 && !isStopword(t)));
   let best = null;
   for (const l of laws) {
     const hay = `${l.name} ${l.statement}`;
+    const toks = lawToks(l);
     for (const t of OBSERVABLE) {
       if (t.match.test(hay)) {
-        const score = (t.q.toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((w) => hay.toLowerCase().includes(w)).length;
+        const ql = t.q.toLowerCase();
+        const score = [...toks].filter((w) => new RegExp(`(^|[^a-z0-9])${w}([^a-z0-9]|$)`, "i").test(ql)).length;
         if (!best || score > best.score)
           best = { q: t.q, score };
       }
@@ -565,7 +577,6 @@ function observableQuestion(laws) {
   }
   return best?.q ?? CHAIN.P4.q;
 }
-var RELEVANCE_T = relevanceT();
 async function relevancePass(laws, filePath, hunk, timeoutMs = 20000) {
   if (laws.length === 0)
     return { ok: true, scored: [], requests: 0, judged: 0, total: 0, dropped: 0 };
@@ -573,8 +584,14 @@ async function relevancePass(laws, filePath, hunk, timeoutMs = 20000) {
   if (!h.ok)
     return { ok: false, scored: [], reason: h.reason, requests: 0, judged: 0, total: laws.length, dropped: 0 };
   const CAPPED = 12;
-  const judged = laws.slice(0, CAPPED);
+  const ordered = [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
+  const judged = ordered.slice(0, CAPPED);
   const dropped = laws.length - judged.length;
+  if (typeof filePath !== "string" || filePath.length === 0)
+    filePath = "(no file)";
+  if (typeof hunk !== "string")
+    hunk = "";
+  laws = Array.isArray(laws) ? laws.filter((l) => l && typeof l.id === "string" && typeof l.statement === "string") : [];
   const normPath = filePath.replace(/\\/g, "/").replace(/\/+$/, "");
   const segs = normPath.split("/").filter(Boolean);
   const subject = segs.length > 1 ? `${segs[segs.length - 2]}/${segs[segs.length - 1]}` : segs[0] ?? filePath;
@@ -645,22 +662,23 @@ function lawCard(kept, totalCandidates, judged) {
   if (!kept || kept.length === 0)
     return [];
   const clean = kept.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string");
+  const n = clean.length;
   return clean.map(({ law, p }) => {
     const measured = typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     const prob = measured ? `relevance ${p.toFixed(2)}` : "relevance unread";
-    const of = totalCandidates > kept.length ? ` \xB7 kept ${kept.length} of ${totalCandidates} candidates` : "";
+    const of = totalCandidates > n ? ` \xB7 kept ${n} of ${totalCandidates} candidates` : "";
     return {
       shape: "LAW",
       title: `${law.name} \u2014 governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
       rows: [
         `LAW: ${law.statement}`,
-        `TIER: ${law.tier}${law.tier === "IMMUTABLE" ? " \u2014 never change without a recorded ruling" : ""}`,
-        `SOURCE: ${law.anchor}`,
+        `TIER: ${law.tier ?? "(tier missing)"}${law.tier === "IMMUTABLE" ? " \u2014 never change without a recorded ruling" : ""}`,
+        `SOURCE: ${law.anchor ?? "(anchor missing)"}`,
         judged ? `JUDGE: ${prob}` : `LEXICAL: token match, not judged`
       ],
       severity: SEVERITY.Information,
       source: "plutus/law",
-      total: kept.length
+      total: n
     };
   });
 }
@@ -670,7 +688,7 @@ function verdictCard(v, kept, targetFile) {
   const vector = v.vector && typeof v.vector === "object" && !Array.isArray(v.vector) ? v.vector : {};
   const pct = (n) => typeof n === "number" && Number.isFinite(n) ? n.toFixed(3) : "n/a";
   if (v.kind === "JUDGE_DOWN") {
-    const code = (v.reason ?? "JEVK5_DOWN").split(":")[0];
+    const code = (typeof v.reason === "string" && v.reason.length > 0 ? v.reason : "JEVK5_DOWN").split(":")[0];
     return {
       shape: "STALE",
       title: `the judge is down \u2014 the canon could not be consulted [${code}]`,
@@ -700,7 +718,7 @@ function verdictCard(v, kept, targetFile) {
   const law = (finiteTop[0] ?? scored[0] ?? kept[0])?.law;
   if (!law)
     return null;
-  const EPS = 0.000000001;
+  const EPS = 0.01;
   const topTied = finiteTop.length > 1 && Math.abs(finiteTop[0].p - finiteTop[1].p) < EPS;
   const attributed = finiteTop.length > 0 && !topTied;
   const vecStr = Object.entries(vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ");
@@ -708,10 +726,12 @@ function verdictCard(v, kept, targetFile) {
   const known = v.kind === "VIOLATION" || v.kind === "DRIFT" ? v.kind : "SUSPECT";
   const kindNote = known === "SUSPECT" && v.kind !== "SUSPECT" ? ` (kind ${v.kind} coerced)` : "";
   const effKind = !attributed ? "SUSPECT" : known;
-  if (effKind === "VIOLATION" && v.kind === "VIOLATION") {
+  const weakScore = v.weakest ? vector[v.weakest] : undefined;
+  const vacuous = v.weakest == null || typeof weakScore !== "number" || !Number.isFinite(weakScore);
+  if (effKind === "VIOLATION" && v.kind === "VIOLATION" && !vacuous) {
     return {
       shape: "VIOLATION",
-      title: `VIOLATION \u2014 this change contradicts ${law.name} (${v.weakest ?? "none"}=${pct(v.weakest ? vector[v.weakest] : undefined)})`,
+      title: `VIOLATION \u2014 this change contradicts ${law.name} (${v.weakest}=${pct(weakScore)})`,
       rows: [
         `LAW: ${law.statement}`,
         `SOURCE: ${law.anchor}`,
@@ -763,11 +783,12 @@ function callersCard(callers) {
   };
 }
 function staleCard(reason) {
-  const code = reason.split(":")[0];
+  const rs = typeof reason === "string" && reason.length > 0 ? reason : "PLUTUS_NO_STORE: unknown";
+  const code = rs.split(":")[0];
   return {
     shape: "STALE",
     title: `the canon graph is unavailable [${code}]`,
-    rows: [`reason: ${reason}`],
+    rows: [`reason: ${rs}`],
     severity: SEVERITY.Warning,
     source: "plutus/stale",
     total: 1
@@ -847,8 +868,12 @@ async function pipeline(file, source, useJudge = true) {
   const decls = declarationsIn(source);
   const hunk = source.slice(0, 1200);
   const candidates = lawsForHunk(store, file, decls, hunk, 12);
-  const root = store.root;
-  readL2(l2SocketFor(root), 400).then((l2) => receipt2(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`), (e) => receipt2(`L2_THROW: ${e.message}`));
+  try {
+    const sock = l2SocketFor(store.root);
+    readL2(sock, 400).then((l2) => receipt2(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`), (e) => receipt2(`L2_THROW: ${e.message}`));
+  } catch (e) {
+    receipt2(`L2_THROW: ${e.message}`);
+  }
   if (candidates.length === 0) {
     receipt2(`NO-LAW file=${file} decls=${decls.length}`);
     return { tokens: [], cards: [], refused: null, vector: {} };
@@ -867,7 +892,7 @@ async function pipeline(file, source, useJudge = true) {
       relevance = rel.scored.map((r) => ({ lawId: r.lawId, p: r.p }));
       const byId = new Map(rel.scored.map((r) => [r.lawId, r.p]));
       judgedLaws = part.relevant.map((law) => ({ law, p: byId.get(law.id) ?? -1 }));
-      receipt2(`RELEVANCE ok=${rel.scored.filter((r) => r.p >= RELEVANCE_T).length}/${rel.scored.length} ` + `${part.rejected.map((x) => `${x.law.name}@${x.p.toFixed(2)}`).join(",") || "(none rejected)"}`);
+      receipt2(`RELEVANCE ok=${rel.scored.filter((r) => r.p >= relevanceT()).length}/${rel.scored.length} ` + `${part.rejected.map((x) => `${x.law.name}@${x.p.toFixed(2)}`).join(",") || "(none rejected)"}`);
       if (all.length === 0) {
         receipt2("RELEVANCE none \u2014 no card emitted");
         return { tokens: [], cards: [], refused: null, vector: {}, relevance };
@@ -1036,6 +1061,13 @@ ${j}`);
   const MAX_STDIN = 32 * 1024 * 1024;
   process.stdin.on("data", (c) => {
     buf = Buffer.concat([buf, c]);
+    if (buf.indexOf(`\r
+\r
+`) < 0 && buf.length > MAX_STDIN) {
+      log(`STDIN_OVERSIZE_RESET: ${buf.length} headerless bytes \u2014 resetting`);
+      buf = Buffer.alloc(0);
+      return;
+    }
     for (;; ) {
       const head = buf.indexOf(`\r
 \r
@@ -1098,7 +1130,11 @@ ${j}`);
             log(`INCREMENTAL_REJECTED ${uri}: range edits unsupported (change:1 full-sync only)`);
           }
         }
-        const text = cc.length > 0 ? cc[cc.length - 1]?.text ?? docs.get(uri) ?? "" : p?.textDocument?.text ?? docs.get(uri) ?? "";
+        const full = cc.filter((f) => f && typeof f === "object" && f.range === undefined);
+        const partial = cc.length - full.length;
+        if (partial > 0)
+          log(`INCREMENTAL_REJECTED ${uri}: ${partial} ranged fragment(s) \u2014 last-good kept`);
+        const text = full.length > 0 ? full[full.length - 1].text ?? docs.get(uri) ?? "" : p?.textDocument?.text ?? docs.get(uri) ?? "";
         if (uri) {
           docs.set(uri, text);
           scheduleAnalyze(uri);

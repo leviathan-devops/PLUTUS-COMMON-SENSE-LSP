@@ -41,7 +41,8 @@ test("A4_a_known_violation_renders_the_VIOLATION_token", () => {
   // FIX F7 (audit-alpha: A4 was SELF-REFERENTIAL — it hand-built the vector + asserted the
   // renderer echoed it). The REAL path: verdict() DECIDES from the vector (the threshold
   // crossing), then the renderer. Both halves now.
-  const v = verdict({ ok: true, answers: { P4: 0.91 }, requests: 1 });   // the real decision
+  // round-11 (H2): P2 jurisdiction evidence rides every real chain vector — the test does too.
+  const v = verdict({ ok: true, answers: { P2: 0.9, P4: 0.91 }, requests: 1 });   // the real decision
   expect(v.kind).toBe("VIOLATION");                                      // the threshold crossed
   const card = verdictCard(v, [{ law: { id: "law::IRON-01", name: "IRON-01", statement: "SL ceiling 36 pips (D17)", tier: "IMMUTABLE", anchor: "b:1", source: "MC" }, p: 0.9 }]);
   expect(card).toBeDefined();
@@ -100,12 +101,12 @@ test("A10_the_production_chain_is_the_calibrated_chain (F1+F2)", async () => {
 });
 
 test("A11_the_bars_are_validated (F10 — an env override cannot fail open)", () => {
-  const { THROW_T, DEMAND_T } = require("../src/plutus-lsp/judge.ts");
-  expect(THROW_T).toBeGreaterThan(0); expect(THROW_T).toBeLessThan(1);
-  expect(DEMAND_T).toBeGreaterThan(0); expect(DEMAND_T).toBeLessThan(1);
+  const { throwT, demandT } = require("../src/plutus-lsp/judge.ts");
+  expect(throwT()).toBeGreaterThan(0); expect(throwT()).toBeLessThan(1);
+  expect(demandT()).toBeGreaterThan(0); expect(demandT()).toBeLessThan(1);
   // a garbage env value must NOT produce NaN/0 — the module is already loaded; assert the shape
-  expect(Number.isFinite(THROW_T)).toBe(true);
-  expect(Number.isFinite(DEMAND_T)).toBe(true);
+  expect(Number.isFinite(throwT())).toBe(true);
+  expect(Number.isFinite(demandT())).toBe(true);
 });
 
 /**
@@ -125,9 +126,9 @@ test("A12_the_relevance_kernel_is_wired (not lexical-only)", async () => {
 });
 
 test("A13_the_relevance_bar_is_derived (0.30, not the assumed 0.50)", async () => {
-  const { RELEVANCE_T } = await import("../src/plutus-lsp/judge.ts");
-  expect(RELEVANCE_T).toBe(0.3);      // the swept bar
-  expect(RELEVANCE_T).not.toBe(0.5);  // the assumed bar that lost coverage
+  const { relevanceT } = await import("../src/plutus-lsp/judge.ts");
+  expect(relevanceT()).toBe(0.3);      // the swept bar
+  expect(relevanceT()).not.toBe(0.5);  // the assumed bar that lost coverage
 });
 
 test("A14_relevance_partitions_on_the_bar", async () => {
@@ -147,4 +148,55 @@ test("A14_relevance_partitions_on_the_bar", async () => {
   expect(stale.relevant.length).toBe(0);
   expect(stale.rejected.length).toBe(0);
   expect(stale.unknown.length).toBe(0);
+});
+
+test("A15_missing_P2_is_INCONCLUSIVE (H2 fail-closed jurisdiction)", async () => {
+  const { verdict } = await import("../src/plutus-lsp/judge.ts");
+  // a caller-built vector with NO jurisdiction evidence must not reach VIOLATION
+  const v = verdict({ ok: true, answers: { P4: 0.95 }, requests: 1 });
+  expect(v.kind).toBe("INCONCLUSIVE");
+  expect(v.weakest).toBe("P2");
+  // ...while the same vector WITH P2 crosses
+  const v2 = verdict({ ok: true, answers: { P2: 0.9, P4: 0.95 }, requests: 1 });
+  expect(v2.kind).toBe("VIOLATION");
+});
+
+test("A16_vacuous_VIOLATION_downgrades (H6 no vacuous Error)", async () => {
+  const { verdictCard } = await import("../src/plutus-lsp/cards.ts");
+  const LAW = { id: "law::X", name: "X-LAW", statement: "s", tier: "IMMUTABLE", anchor: "a:1", source: "MC" };
+  // weakest null + empty vector: the old code rendered `VIOLATION (none=n/a)` at Error
+  const c: any = verdictCard({ kind: "VIOLATION", weakest: null, vector: {} }, [{ law: LAW, p: 0.9 }]);
+  expect(c.shape).not.toBe("VIOLATION");
+  expect(c.shape).toBe("SUSPECT");
+});
+
+test("A17_staleCard_never_throws (H7 refusal path)", async () => {
+  const { staleCard } = await import("../src/plutus-lsp/cards.ts");
+  expect(() => staleCard(null as any)).not.toThrow();
+  expect(() => staleCard(undefined as any)).not.toThrow();
+  expect(() => staleCard(42 as any)).not.toThrow();
+  expect(staleCard(null as any).title).toContain("PLUTUS_NO_STORE");
+});
+
+test("A18_counts_are_emitted (H5 clean.length)", async () => {
+  const { lawCard } = await import("../src/plutus-lsp/cards.ts");
+  const LAW = { id: "law::X", name: "X-LAW", statement: "s", tier: "IMMUTABLE", anchor: "a:1", source: "MC" };
+  const cards = lawCard([{ law: LAW, p: 0.9 } as any, null as any], 5, true);
+  expect(cards.length).toBe(1);          // the malformed entry is dropped from output...
+  expect(cards[0].total).toBe(1);        // ...AND from the count (never claims 2)
+  expect(cards[0].title).toContain("kept 1 of 5");
+});
+
+test("A19_incremental_never_becomes_doc (H12 full-sync)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  // a ranged fragment must not be applied as the whole document
+  expect(server).toContain("range === undefined");
+  expect(server).toContain("INCREMENTAL_REJECTED");
+});
+
+test("A20_headerless_stdin_capped (H11 no unbounded growth)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  expect(server).toContain("headerless bytes");
 });

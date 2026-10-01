@@ -77,24 +77,30 @@ export function lawCard(kept: JudgedLaw[] | null | undefined, totalCandidates: n
   // FIX (audit: per-element guards + finite 0..1) — one malformed entry must not throw and lose
   // every card; Infinity is NOT a measured probability (it rendered as "Infinity" in a title).
   const clean = kept.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string");
+  // FIX (audit round-11: count what was EMITTED) — `of`/`total` used unfiltered kept.length
+  // while cards came from clean: one malformed entry made the card claim a count it did not
+  // emit. Both now read clean.length.
+  const n = clean.length;
   return clean.map(({ law, p }) => {
     const measured = typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     const prob = measured ? `relevance ${p.toFixed(2)}` : "relevance unread";
-    const of = totalCandidates > kept.length ? ` · kept ${kept.length} of ${totalCandidates} candidates` : "";
+    const of = totalCandidates > n ? ` · kept ${n} of ${totalCandidates} candidates` : "";
     return {
       shape: "LAW" as const,
       title: `${law.name} — governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
       rows: [
         `LAW: ${law.statement}`,
-        `TIER: ${law.tier}${law.tier === "IMMUTABLE" ? " — never change without a recorded ruling" : ""}`,
-        `SOURCE: ${law.anchor}`,
+        // FIX (audit round-11: tier/anchor fallbacks) — clean only checks name/statement, so a
+        // corrupt store rendered `TIER: undefined` / `SOURCE: undefined`. Named fallbacks now.
+        `TIER: ${law.tier ?? "(tier missing)"}${law.tier === "IMMUTABLE" ? " — never change without a recorded ruling" : ""}`,
+        `SOURCE: ${law.anchor ?? "(anchor missing)"}`,
         // FIX (audit: lexical path mislabeled) — when no judge ran, the row says LEXICAL,
         // never a probability (traceability: a number must come from the model that ran it)
         judged ? `JUDGE: ${prob}` : `LEXICAL: token match, not judged`,
       ],
       severity: SEVERITY.Information,
       source: "plutus/law" as const,
-      total: kept.length,
+      total: n,
     };
   });
 }
@@ -118,7 +124,9 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
     // (this one + staleCard for a dead graph). The reason CODE is the machine-readable
     // discriminator: JEVK5_* = the judge lane, PLUTUS_NO_* = the graph lane. Consumers
     // filter on the code, never on title prose.
-    const code = (v.reason ?? "JEVK5_DOWN").split(":")[0];
+    // FIX (audit round-11: reason typeof guard) — a non-string reason (number/object via JS
+    // interop) threw on .split and lost every card. Non-strings get the named code.
+    const code = (typeof v.reason === "string" && v.reason.length > 0 ? v.reason : "JEVK5_DOWN").split(":")[0];
     return {
       shape: "STALE",
       title: `the judge is down — the canon could not be consulted [${code}]`,
@@ -155,7 +163,10 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   const finiteTop = scored.filter((k) => Number.isFinite(k.p) && k.p >= 0 && k.p <= 1).sort((a, b) => b.p - a.p);
   const law = (finiteTop[0] ?? scored[0] ?? kept[0])?.law;
   if (!law) return null;                            // no measured law → no card, never a guess
-  const EPS = 1e-9;
+  // FIX (audit round-11: epsilon at DISPLAY precision) — 1e-9 caught exact-float ties only,
+  // but titles render p.toFixed(2): 0.811 vs 0.807 displayed identically yet attributed
+  // confidently. Near-ties within display rounding now downgrade to SUSPECT.
+  const EPS = 1e-2;
   const topTied = finiteTop.length > 1 && Math.abs(finiteTop[0].p - finiteTop[1].p) < EPS;
   const attributed = finiteTop.length > 0 && !topTied;
 
@@ -168,10 +179,15 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   const known = v.kind === "VIOLATION" || v.kind === "DRIFT" ? v.kind : "SUSPECT";
   const kindNote = known === "SUSPECT" && v.kind !== "SUSPECT" ? ` (kind ${v.kind} coerced)` : "";
   const effKind: "VIOLATION" | "DRIFT" | "SUSPECT" = !attributed ? "SUSPECT" : known;
-  if (effKind === "VIOLATION" && v.kind === "VIOLATION") {
+  // FIX (audit round-11: no vacuous Error) — when weakest is null or its score is missing,
+  // the old title rendered `VIOLATION — … (none=n/a)`: a confident breach card with NO measured
+  // clause. A breach without its evidence is SUSPECT (a warning), never an Error.
+  const weakScore = v.weakest ? vector[v.weakest as keyof typeof vector] : undefined;
+  const vacuous = v.weakest == null || typeof weakScore !== "number" || !Number.isFinite(weakScore);
+  if (effKind === "VIOLATION" && v.kind === "VIOLATION" && !vacuous) {
     return {
       shape: "VIOLATION",
-      title: `VIOLATION — this change contradicts ${law.name} (${v.weakest ?? "none"}=${pct(v.weakest ? vector[v.weakest as keyof typeof vector] : undefined)})`,
+      title: `VIOLATION — this change contradicts ${law.name} (${v.weakest}=${pct(weakScore)})`,
       rows: [
         `LAW: ${law.statement}`,
         `SOURCE: ${law.anchor}`,
@@ -232,14 +248,17 @@ export function callersCard(callers: unknown): FactCard | null {
 }
 
 /** STALE — a named refusal (no graph, judge down). A loud card, never a silent pass. */
-export function staleCard(reason: string): FactCard {
+export function staleCard(reason: string | null | undefined): FactCard {
   // FIX (audit: STALE disambiguation) — same shape/source as the JUDGE_DOWN card above; the
   // reason CODE in the title is the discriminator (PLUTUS_NO_* = the graph lane).
-  const code = reason.split(":")[0];
+  // FIX (audit round-11: null-guarded) — reason.split threw on null/undefined/non-string,
+  // losing EVERY card for the file. A refusal path must never throw.
+  const rs = typeof reason === "string" && reason.length > 0 ? reason : "PLUTUS_NO_STORE: unknown";
+  const code = rs.split(":")[0];
   return {
     shape: "STALE",
     title: `the canon graph is unavailable [${code}]`,
-    rows: [`reason: ${reason}`],
+    rows: [`reason: ${rs}`],
     severity: SEVERITY.Warning,
     source: "plutus/stale",
     total: 1,

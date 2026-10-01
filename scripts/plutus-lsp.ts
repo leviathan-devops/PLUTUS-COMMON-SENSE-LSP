@@ -16,7 +16,7 @@ import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadStore, lawsForHunk, declarationsIn, callersOf, readL2, l2SocketFor } from "../src/plutus-lsp/store.ts";
-import { chain, verdict, buildState, observableQuestion, relevancePass, partitionByRelevance, RELEVANCE_T, setReceipt as setJudgeReceipt } from "../src/plutus-lsp/judge.ts";
+import { chain, verdict, buildState, observableQuestion, relevancePass, partitionByRelevance, relevanceT, setReceipt as setJudgeReceipt } from "../src/plutus-lsp/judge.ts";
 import { fileCards, staleCard, PLUTUS_LSP_TOKENS, type FactCard } from "../src/plutus-lsp/cards.ts";
 
 // FIX (audit: portable paths) — the receipt/log default to the repo's own forensic/ dir
@@ -83,11 +83,16 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   // FIX (audit: L2 is fire-and-forget) — the old code awaited the probe inline (up to 400ms)
   // on every debounced keystroke, delaying publishDiagnostics despite the "never blocking"
   // contract. The probe now races the pipeline: its receipt lands when it lands.
-  const root = store.root;
-  void readL2(l2SocketFor(root), 400).then(
-    (l2) => receipt(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`),
-    (e) => receipt(`L2_THROW: ${(e as Error).message}`),
-  );
+  // FIX (audit round-11: the sync throw is CAUGHT) — l2SocketFor(root) was evaluated
+  // inside the readL2() ARGUMENTS, so a sync throw (bad root → resolve/homedir throws)
+  // escaped the .then(_, onRejected) handler. The socket path resolves inside try first.
+  try {
+    const sock = l2SocketFor(store.root);
+    void readL2(sock, 400).then(
+      (l2) => receipt(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`),
+      (e) => receipt(`L2_THROW: ${(e as Error).message}`),
+    );
+  } catch (e) { receipt(`L2_THROW: ${(e as Error).message}`); }
   if (candidates.length === 0) { receipt(`NO-LAW file=${file} decls=${decls.length}`); return { tokens: [], cards: [], refused: null, vector: {} }; }
 
   let v = null;
@@ -109,7 +114,7 @@ export async function pipeline(file: string, source: string, useJudge = true): P
       // join by lawId (identity), never indexOf on law objects (aliasing + O(n²))
       const byId = new Map(rel.scored.map((r) => [r.lawId, r.p]));
       judgedLaws = part.relevant.map((law) => ({ law, p: byId.get(law.id) ?? -1 }));
-      receipt(`RELEVANCE ok=${rel.scored.filter((r) => r.p >= RELEVANCE_T).length}/${rel.scored.length} ` +
+      receipt(`RELEVANCE ok=${rel.scored.filter((r) => r.p >= relevanceT()).length}/${rel.scored.length} ` +
         `${part.rejected.map((x) => `${x.law.name}@${x.p.toFixed(2)}`).join(",") || "(none rejected)"}`);
       // the judge's verdict IS the filter: if NOTHING is relevant, emit nothing (no noise)
       if (all.length === 0) { receipt("RELEVANCE none — no card emitted"); return { tokens: [], cards: [], refused: null, vector: {}, relevance }; }
@@ -266,6 +271,14 @@ if (process.argv.includes("--stdio")) {
   const MAX_STDIN = 32 * 1024 * 1024;
   process.stdin.on("data", (c: Buffer) => {
     buf = Buffer.concat([buf, c]);
+    // FIX (audit round-11: the headerless path is CAPPED too) — the old code only enforced
+    // MAX_STDIN after a header was found. A peer streaming bytes with no separator grew buf
+    // unbounded (Buffer.concat until OOM). A headerless buffer past the cap is reset LOUDLY.
+    if (buf.indexOf("\r\n\r\n") < 0 && buf.length > MAX_STDIN) {
+      log(`STDIN_OVERSIZE_RESET: ${buf.length} headerless bytes — resetting`);
+      buf = Buffer.alloc(0);
+      return;
+    }
     for (;;) {
       const head = buf.indexOf("\r\n\r\n");
       if (head < 0) break;
@@ -333,7 +346,14 @@ if (process.argv.includes("--stdio")) {
             log(`INCREMENTAL_REJECTED ${uri}: range edits unsupported (change:1 full-sync only)`);
           }
         }
-        const text = cc.length > 0 ? (cc[cc.length - 1]?.text ?? docs.get(uri) ?? "") : (p?.textDocument?.text ?? docs.get(uri) ?? "");
+        // FIX (audit round-11: incremental NEVER becomes the doc) — the old line applied
+        // cc[last].text as the whole document even for incremental clients: a partial range
+        // edit's `text` REPLACED the file. Full-sync (change:1) means ONLY a fragment with NO
+        // range is a whole document; a ranged fragment is REJECTED (last-good kept).
+        const full = cc.filter((f) => f && typeof f === "object" && (f as { range?: unknown }).range === undefined);
+        const partial = cc.length - full.length;
+        if (partial > 0) log(`INCREMENTAL_REJECTED ${uri}: ${partial} ranged fragment(s) — last-good kept`);
+        const text = full.length > 0 ? ((full[full.length - 1] as { text?: unknown }).text as string ?? docs.get(uri) ?? "") : (p?.textDocument?.text ?? docs.get(uri) ?? "");
         if (uri) { docs.set(uri, text); scheduleAnalyze(uri); }
       } else if (msg.method === "textDocument/didClose") {
         const p = msg.params as { textDocument?: { uri?: string } } | undefined;

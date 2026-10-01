@@ -10,7 +10,7 @@
  *   violation is the expensive error — see verdict() for the composition fix)
  */
 
-import { JEVK5_DOWN, type LawEntity } from "./store.ts";
+import { JEVK5_DOWN, isStopword, type LawEntity } from "./store.ts";
 export { JEVK5_DOWN } from "./store.ts";   // re-export (the judge owns the refusal)
 
 // FIX (audit: loud, never silent) — the library has no stderr channel of its own; the host
@@ -124,8 +124,10 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
   // FIX (audit: validate the NodeId) — CHAIN[id].q throws TypeError on a runtime-invalid id
   // (via cast), rejecting the promise instead of returning a JudgeVector. Invalid ids are
   // filtered with a loud receipt, never a throw.
-  const valid = deduped.filter((id) => id in CHAIN);
-  const invalid = deduped.filter((id) => !(id in CHAIN));
+  // FIX (audit round-11: `in` admits inherited props) — "toString"/"__proto__" in CHAIN is
+  // true, so a cast string passed validation and CHAIN[id].q blew up. Object.hasOwn only.
+  const valid = deduped.filter((id) => Object.hasOwn(CHAIN, id));
+  const invalid = deduped.filter((id) => !Object.hasOwn(CHAIN, id));
   if (invalid.length > 0) receipt(`CHAIN invalid NodeId(s): ${invalid.join(",")} — filtered, never judged`);
   if (valid.length === 0) return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const questions: Record<string, { type: "noul"; instructions: string }> = {};
@@ -151,6 +153,11 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
 
 /** The evidence text — assembled FROM DISK by the caller (never agent prose). */
 export function buildState(target: string, laws: LawEntity[], hunk: string): string {
+  // FIX (audit round-11: null guards on disk inputs) — a null law entry or non-string hunk
+  // (an upstream disk-read failure) threw instead of degrading. Garbage in → named state out.
+  if (typeof target !== "string") target = String(target ?? "(no target)");
+  if (typeof hunk !== "string") hunk = "";
+  laws = Array.isArray(laws) ? laws.filter((l) => l && typeof l.name === "string" && typeof l.statement === "string") : [];
   // FIX (audit judge.ts:96): an explicit marker — a silent cut risks a false LAW
   // FIX (audit judge.ts:101): IMMUTABLE first — a truncation must not drop the governing law
   const ordered = [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
@@ -187,13 +194,12 @@ const bar = (raw: string | undefined, dflt: number): number => {
 // FIX (audit: single threshold source) — the old consts froze at import while the getters
 // re-read env at call time: a hot-retune reached verdict() but NOT a consumer importing the
 // const. The consts now delegate to the same getters verdict()/partitionByRelevance() use.
-// FIX (audit: lazy thresholds) — the getters read env at CALL time, consistent with
-// jevk5Url(). Hot-retune works. The consts below delegate to the getters (single source).
+// FIX (audit round-11: frozen aliases DELETED) — the old consts froze at import while the
+// getters re-read env: a hot-retune reached verdict() but NOT an importer of the const.
+// There is now ONE source (the getters); an importer that needs the value calls the getter.
 export const throwT = () => bar(process.env.PLUTUS_THROW_T, 0.85);
 export const demandT = () => bar(process.env.PLUTUS_DEMAND_T, 0.30);
 export const relevanceT = () => bar(process.env.PLUTUS_RELEVANCE_T, 0.3);
-export const THROW_T = throwT();   // the VIOLATION bar (policy) — compat alias, same source
-export const DEMAND_T = demandT(); // the SUSPECT bar (DERIVED) — compat alias, same source
 
 export interface Verdict {
   kind: "VIOLATION" | "SUSPECT" | "DRIFT" | "LAW" | "INCONCLUSIVE" | "JUDGE_DOWN";
@@ -219,7 +225,11 @@ export function verdict(v: JudgeVector): Verdict {
   // FIX (the container S5, measured): jurisdiction comes from THE LAWS, not the model's path read.
   // A file that matched canon laws IS in-scope BY CONSTRUCTION — P1 is recorded in the vector
   // (it informs) but does NOT block the verdict; P2 (the law presence) is the real gate.
-  if (a.P2 !== undefined && a.P2 < demandT()) return { kind: "INCONCLUSIVE", weakest: "P2", vector: a };
+  // FIX (audit round-11: fail-closed jurisdiction) — the old gate fired only when P2 was
+  // ANSWERED and low. A vector with P2 MISSING (a tolerated partial, a caller-built vector)
+  // reached VIOLATION with no jurisdiction evidence at all. Missing P2 is now INCONCLUSIVE too:
+  // jurisdiction must be PRESENT and sufficient, never merely un-refuted.
+  if (a.P2 === undefined || a.P2 < demandT()) return { kind: "INCONCLUSIVE", weakest: "P2", vector: a };
   // ★ THE COMPOSITION FIX (the derailment probe, 2026-09-30). The rule was min() over the
   //   wrongness clauses — the "weakest clause, never an average" law. MEASURED, that law is
   //   BACKWARDS for this layer: the clauses are about DIFFERENT law kinds, so an inapplicable
@@ -271,14 +281,21 @@ export const OBSERVABLE: Array<{ match: RegExp; q: string }> = [
 
 /** The best observable question for a set of laws — the FIRST template that matches, else the generic. */
 export function observableQuestion(laws: LawEntity[]): string {
-  // FIX (audit judge.ts:149): score every law x template; the MOST-SPECIFIC match wins
-  // (a template that matches a law whose text is closest to the template's own keywords).
+  // FIX (audit round-11: specificity measured the WRONG TEXT) — the old score counted the
+  // TEMPLATE's generic words (does/evidence/state) appearing in the LAW, so longer templates
+  // auto-won and substring includes() inflated hits. Now: the LAW's distinctive tokens
+  // (name parts + statement keywords, stopwords dropped) appearing in the TEMPLATE's question.
+  // The template whose question contains the most of the LAW's own vocabulary wins.
+  const lawToks = (l: LawEntity): Set<string> =>
+    new Set(`${l.name} ${l.statement}`.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 4 && !isStopword(t)));
   let best: { q: string; score: number } | null = null;
   for (const l of laws) {
     const hay = `${l.name} ${l.statement}`;
+    const toks = lawToks(l);
     for (const t of OBSERVABLE) {
       if (t.match.test(hay)) {
-        const score = (t.q.toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((w) => hay.toLowerCase().includes(w)).length;
+        const ql = t.q.toLowerCase();
+        const score = [...toks].filter((w) => new RegExp(`(^|[^a-z0-9])${w}([^a-z0-9]|$)`, "i").test(ql)).length;
         if (!best || score > best.score) best = { q: t.q, score };
       }
     }
@@ -324,7 +341,7 @@ export interface RelevanceRow { index: number; lawId: string; p: number }
  * discrimination is not yet exercised — a mixed-candidate fixture (a file that lexically matches
  * one law but is actually about another) is the next measurement.
  */
-export const RELEVANCE_T = relevanceT();   // compat alias — same single source as the getter
+// (round-11: the RELEVANCE_T alias is deleted with the others — call relevanceT().)
 
 export async function relevancePass(
   laws: LawEntity[],
@@ -345,10 +362,19 @@ export async function relevancePass(
   // FIX (audit: cap the relevance batch) — the state is one batched pass; an uncapped
   // candidate list risks an oversized request. Cap at 12 (the detector's wide net) and
   // MARK the truncation so the caller knows the tail was never judged.
+  // FIX (audit round-11: the cap is PRIORITIZED, never input-order) — the old slice kept
+  // whatever order the caller passed, so a governing IMMUTABLE law at index 12+ was never
+  // judged. The cap now keeps IMMUTABLE first (canon outranks), then detector order.
   const CAPPED = 12;
-  const judged = laws.slice(0, CAPPED);
+  const ordered = [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
+  const judged = ordered.slice(0, CAPPED);
   const dropped = laws.length - judged.length;
 
+  // FIX (audit round-11: disk-input guards) — a null filePath/hunk (upstream read failure)
+  // threw on .replace/.slice instead of degrading. Garbage in → named state out.
+  if (typeof filePath !== "string" || filePath.length === 0) filePath = "(no file)";
+  if (typeof hunk !== "string") hunk = "";
+  laws = Array.isArray(laws) ? laws.filter((l) => l && typeof l.id === "string" && typeof l.statement === "string") : [];
   // FIX (audit: cross-platform subject) — backslashes split, trailing slashes yield no
   // empty base, and the parent dir is preserved so same-basename files disambiguate.
   const normPath = filePath.replace(/\\/g, "/").replace(/\/+$/, "");

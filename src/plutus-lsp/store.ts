@@ -97,7 +97,24 @@ export const KNOWN_L1_PATHS: readonly string[] = Object.freeze([
 // FIX (audit: L1_RESOLVED is private + invalidated) — an exported mutable Map can be
 // poisoned by any importer (`set`/`clear` serves a stale corpus as canon). The cache is now
 // module-private and keyed with mtime+size: an edited kg.json is re-read, never stale-served.
-const L1_RESOLVED = new Map<string, { path: string; mtimeMs: number; size: number }>();
+// FIX (audit round-11: the cache validates CONTENT, not just stat) — mtimeMs+size equality
+// missed same-size edits inside the filesystem timestamp granularity (rapid writes,
+// cp --preserve). The entry now also carries a first-4KB fingerprint: a same-size edit with
+// different head bytes is re-read. (A same-size edit with an IDENTICAL 4KB head is the
+// residual — named, not hidden.)
+const L1_RESOLVED = new Map<string, { path: string; mtimeMs: number; size: number; head: string }>();
+/** The first-4KB fingerprint of a file (the cache's content check). Absent → "". */
+function head4(p: string): string {
+  try {
+    const fd = openSync(p, "r");
+    try {
+      const b = Buffer.alloc(4096);
+      const n = readSync(fd, b, 0, 4096, 0);
+      return `${n}:${b.subarray(0, n).toString("base64")}`;
+    } finally { closeSync(fd); }
+  } catch { return ""; }
+}
+
 export function l1PathFor(root: string): string {
   // the env override is AUTHORITATIVE on EVERY call (never cached — tests and sessions
   // switch it; a cached override would serve a stale corpus as canon)
@@ -108,13 +125,13 @@ export function l1PathFor(root: string): string {
   const local = join(root, ".omp", "graph-intelligence", "layers", "semantica", "kg.json");
   try {
     const st = statSync(local);
-    if (st.isFile()) { L1_RESOLVED.set(root, { path: local, mtimeMs: st.mtimeMs, size: st.size }); return local; }
+    if (st.isFile()) { L1_RESOLVED.set(root, { path: local, mtimeMs: st.mtimeMs, size: st.size, head: head4(local) }); return local; }
   } catch { /* fall through */ }
   const hit = L1_RESOLVED.get(root);
   if (hit) {
     try {
       const st = statSync(hit.path);
-      if (st.mtimeMs === hit.mtimeMs && st.size === hit.size) return hit.path;
+      if (st.mtimeMs === hit.mtimeMs && st.size === hit.size && head4(hit.path) === hit.head) return hit.path;
     } catch { /* fall through and re-resolve */ }
     L1_RESOLVED.delete(root);
   }
@@ -126,7 +143,7 @@ export function l1PathFor(root: string): string {
       const known = resolve(rel);
       try {
         const st = statSync(known);
-        if (st.isFile()) { L1_RESOLVED.set(root, { path: known, mtimeMs: st.mtimeMs, size: st.size }); return known; }
+        if (st.isFile()) { L1_RESOLVED.set(root, { path: known, mtimeMs: st.mtimeMs, size: st.size, head: head4(known) }); return known; }
       } catch { /* not present on this host */ }
     }
   }   // FIX: the canon discovery
@@ -280,13 +297,11 @@ export async function readL2(socketPath: string, timeoutMs = 800): Promise<L2Res
       const need = 4 + b.readUInt32BE(0);
       if (need > 16 * 1024 * 1024 + 4) { finish({ ok: false, reason: `L2_FRAME_TOO_LARGE` }); return; }
       if (total < need) return;
-      // FIX (audit store.ts:172): a CUMULATIVE cap — a slow-loris cannot force an OOM
-      if (b.length > 32 * 1024 * 1024) { finish({ ok: false, reason: `L2_OVERSIZE: ${b.length} bytes` }); return; }
-      if (b.length < 4) return;
-      const n = b.readUInt32BE(0);
-      // FIX (audit store.ts:165): a bounded frame — a corrupt peer cannot force an OOM
-      if (n > 16 * 1024 * 1024) { finish({ ok: false, reason: `L2_FRAME_TOO_LARGE: ${n} bytes` }); return; }
-      if (b.length < 4 + n) return;
+      // FIX (audit round-11: dead checks REMOVED) — the old code re-checked b.length>32MB,
+      // b.length<4, n>16MB and b.length<4+n here, but b.length===total>=need>=4 already, so
+      // every one was unreachable (a duplicate of the total/need gates above that masks
+      // future edits). The live gates are: total>32MB (slow-loris) + need>16MB+4 (frame).
+      const n = need - 4;
       clearTimeout(t);
       try {
         const j = JSON.parse(b.subarray(4, 4 + n).toString("utf8"));
@@ -428,13 +443,20 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
  * every file whose `imports` edge targets this file.
  */
 export function callersOf(store: Store, filePath: string): string[] {
-  // FIX (audit: exact, case-PRESERVED matching) — lowercasing both sides conflated distinct
-  // files on case-sensitive filesystems; backslashes never matched. Empty sources dropped.
-  const base = (filePath.split(/[\\/]/).pop() ?? "");
-  if (!base) return [];
+  // FIX (audit round-11: rooted-relative match) — the old basename-suffix match conflated
+  // same-named files in different dirs (pkg/a/util.ts vs lib/util.ts) and un-normalized
+  // ./ ../ targets. Now: normalize slashes + dot segments, then match the target's TAIL
+  // against the file's own rooted tail (last 2 segments), case-PRESERVED. Empty dropped.
+  const norm = (p: string): string => String(p ?? "").replace(/\\/g, "/").split("/").filter((s) => s.length > 0 && s !== ".").reduce<string[]>((acc, s) => (s === ".." ? (acc.pop(), acc) : [...acc, s]), []).join("/");
+  const fp = norm(filePath);
+  if (!fp) return [];
+  const tail = fp.split("/").slice(-2).join("/");
   const hits = store.relationships.filter((r) => {
-    const t = String(r.target ?? "").replace(/\\/g, "/");
-    return r.type === "imports" && (t === base || t.endsWith(`/${base}`));
+    if (r.type !== "imports") return false;
+    const t = norm(r.target);
+    return t === fp || t.endsWith(`/${tail}`);
   });
-  return [...new Set(hits.map((r) => String(r.source ?? "")).filter((x) => x.trim().length > 0))].slice(0, 20);
+  // FIX (audit round-11: deterministic order) — sort before slicing so the same graph
+  // always yields the same callers.
+  return [...new Set(hits.map((r) => String(r.source ?? "")).filter((x) => x.trim().length > 0))].sort().slice(0, 20);
 }
