@@ -2,12 +2,12 @@
 // @bun
 
 // scripts/plutus-lsp.ts
-import { readFileSync as readFileSync2, appendFileSync, mkdirSync, existsSync as existsSync2, statSync as statSync2, realpathSync as realpathSync2 } from "fs";
+import { readFileSync as readFileSync2, appendFileSync, mkdirSync, existsSync as existsSync2, statSync as statSync2, realpathSync as realpathSync2, openSync as openSync2, readSync as readSync2, closeSync as closeSync2, writeFileSync } from "fs";
 import { dirname as dirname2, resolve as resolve2 } from "path";
 import { fileURLToPath } from "url";
 
 // src/plutus-lsp/store.ts
-import { existsSync, statSync, openSync as openSync2, fstatSync, readSync as readSync2, closeSync as closeSync2, readFileSync, realpathSync, constants as FS } from "fs";
+import { existsSync, statSync, openSync, fstatSync, readSync, closeSync, readFileSync, realpathSync, constants as FS } from "fs";
 import { join, dirname, resolve, basename } from "path";
 import { connect } from "net";
 import { homedir } from "os";
@@ -94,6 +94,11 @@ function lawCount(p) {
     if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size)
       return hit.laws;
     const n = lawCountUncached(p);
+    if (LAW_COUNT_CACHE.size >= 128) {
+      const first = LAW_COUNT_CACHE.keys().next().value;
+      if (first)
+        LAW_COUNT_CACHE.delete(first);
+    }
     LAW_COUNT_CACHE.set(p, { mtimeMs: st.mtimeMs, size: st.size, laws: n });
     return n;
   } catch {
@@ -111,13 +116,13 @@ function lawCountUncached(p) {
 }
 function head4(p) {
   try {
-    const fd = openSync2(p, FS.O_RDONLY | FS.O_NONBLOCK);
+    const fd = openSync(p, FS.O_RDONLY | FS.O_NONBLOCK);
     try {
       const b = Buffer.alloc(4096);
-      const n = readSync2(fd, b, 0, 4096, 0);
+      const n = readSync(fd, b, 0, 4096, 0);
       return `${n}:${b.subarray(0, n).toString("base64")}`;
     } finally {
-      closeSync2(fd);
+      closeSync(fd);
     }
   } catch {
     return "";
@@ -197,7 +202,7 @@ function loadStore(startFile) {
     throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${err.code ?? err.message})`);
   }
   try {
-    const fd = openSync2(l1Path, FS.O_RDONLY | FS.O_NONBLOCK);
+    const fd = openSync(l1Path, FS.O_RDONLY | FS.O_NONBLOCK);
     try {
       const st = fstatSync(fd);
       if (!st.isFile())
@@ -209,7 +214,7 @@ function loadStore(startFile) {
       const buf = Buffer.alloc(st.size);
       let off = 0;
       while (off < st.size) {
-        const n = readSync2(fd, buf, off, st.size - off, null);
+        const n = readSync(fd, buf, off, st.size - off, null);
         if (n <= 0)
           break;
         off += n;
@@ -218,7 +223,7 @@ function loadStore(startFile) {
         throw new Error(`short read ${off}/${st.size} bytes (file changed during read)`);
       raw = buf.subarray(0, off).toString("utf8");
     } finally {
-      closeSync2(fd);
+      closeSync(fd);
     }
   } catch (e) {
     throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${e.message})`);
@@ -869,7 +874,7 @@ function lawCard(kept, totalCandidates, judged) {
   return clean.slice(0, 32).map(({ law, p }) => {
     const measured = typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     const prob = measured ? `relevance ${p.toFixed(2)}` : "relevance unread";
-    const of = tot > n ? ` \xB7 kept ${n} of ${tot} candidates` : "" + (n > shown ? ` \xB7 shown ${shown} of ${n}` : "");
+    const of = (tot > n ? ` \xB7 kept ${n} of ${tot} candidates` : "") + (n > shown ? ` \xB7 shown ${shown} of ${n}` : "");
     return {
       shape: "LAW",
       title: `${cap(law.name, 80)} \u2014 governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
@@ -1008,7 +1013,22 @@ function callersCard(callers) {
     total: shown.length
   };
 }
-var staleCode = (raw, dflt = "PLUTUS_NO_STORE") => /^([A-Z][A-Z0-9_]*)/.exec(raw.trim())?.[1]?.slice(0, 32) ?? dflt;
+var STALE_CODES = Object.freeze([
+  "PLUTUS_NO_STORE",
+  "PLUTUS_NO_ROOT",
+  "JEVK5_DOWN",
+  "JUDGE_DEGRADED",
+  "JUDGE_NO_NODES",
+  "JUDGE_ANSWER_COUNT",
+  "L2_TIMEOUT",
+  "L2_OVERSIZE",
+  "L2_FRAME_TOO_LARGE",
+  "L2_WRITE"
+]);
+var staleCode = (raw, dflt = "PLUTUS_NO_STORE") => {
+  const head = /^([A-Z][A-Z0-9_]*)/.exec(raw.trim())?.[1] ?? "";
+  return STALE_CODES.includes(head) ? head : dflt;
+};
 function staleCard(reason) {
   const rs = typeof reason === "string" && reason.trim().length > 0 ? reason : "PLUTUS_NO_STORE: unknown";
   const code = staleCode(rs);
@@ -1079,26 +1099,44 @@ var receipt2 = (line) => {
   if (receiptBuf.length > 200)
     receiptFlush();
 };
-try {
-  if (existsSync2(RECEIPT) && statSync2(RECEIPT).size > 12 * 1024 * 1024) {
-    const fd = openSync(RECEIPT, "r");
+function rotateReceipt() {
+  try {
+    if (!existsSync2(RECEIPT))
+      return;
+    const size = statSync2(RECEIPT).size;
+    if (size <= 12 * 1024 * 1024)
+      return;
+    const fd = openSync2(RECEIPT, "r");
     let tail = "";
     try {
-      const size = statSync2(RECEIPT).size;
       const start = Math.max(0, size - 256 * 1024);
       const b = Buffer.alloc(size - start);
-      const n = readSync(fd, b, 0, b.length, start);
+      const n = readSync2(fd, b, 0, b.length, start);
       tail = b.subarray(0, Math.max(0, n)).toString("utf8").split(`
 `).slice(-2000).join(`
 `);
     } finally {
-      closeSync(fd);
+      closeSync2(fd);
     }
     writeFileSync(RECEIPT, `--- RECEIPT ROTATED (12MB cap) ---
 ${tail}
 `);
+    try {
+      if (existsSync2(LOG) && statSync2(LOG).size > 4 * 1024 * 1024)
+        writeFileSync(LOG, "");
+    } catch {}
+    try {
+      process.stderr.write(`RECEIPT_ROTATED: ${size} -> ${statSync2(RECEIPT).size} bytes
+`);
+    } catch {}
+  } catch (e) {
+    try {
+      process.stderr.write(`RECEIPT_ROTATE_FAIL: ${e.message}
+`);
+    } catch {}
   }
-} catch {}
+}
+rotateReceipt();
 setReceipt((line) => receipt2(line));
 var LOG = process.env.PLUTUS_LSP_LOG ?? `${FORENSIC}/lsp-stderr.log`;
 var clean = (m) => m.replace(/[\r\n]+/g, " ");
@@ -1155,7 +1193,9 @@ async function pipeline(file, source, useJudge = true) {
     if (rel.ok) {
       receipt2(`RELEVANCE judged=${rel.judged}/${rel.total} dropped=${rel.dropped}`);
       const part = partitionByRelevance(candidates, rel.scored);
-      all = part.relevant;
+      all = [...part.relevant, ...part.unknown];
+      if (part.unknown.length > 0)
+        receipt2(`RELEVANCE unknown=${part.unknown.length} (judge-unreadable \u2014 carried as unread)`);
       relevance = rel.scored.map((r) => ({ lawId: r.lawId, p: r.p }));
       const byId = new Map(rel.scored.map((r) => [r.lawId, r.p]));
       judgedLaws = part.relevant.map((law) => ({ law, p: byId.get(law.id) ?? -1 }));
@@ -1208,6 +1248,7 @@ var exitFlushed = (code) => {
   try {
     receiptFlush();
   } catch {}
+  rotateReceipt();
   if (!sendChainRef) {
     process.exit(code);
     return;
@@ -1327,7 +1368,8 @@ ${j}`);
     if (/^\/[a-zA-Z]:[\/]/.test(p))
       p = p.slice(1);
     const np = resolve2(p);
-    if (!np.startsWith("/"))
+    const isAbs = np.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(np);
+    if (!isAbs)
       throw new Error(`PATH_NOT_ABSOLUTE: ${np.slice(0, 60)}`);
     let rp = np;
     try {
@@ -1522,8 +1564,10 @@ ${j}`);
           for (const f of ranged)
             text = applyRange(text, f);
         }
+        const MAX_DOC_BYTES = 1 * 1024 * 1024;
         if (uri) {
-          docs.set(uri, text);
+          const stored = text.length > MAX_DOC_BYTES ? (receipt2(`DOC_TRUNCATED ${uri}: ${text.length} -> ${MAX_DOC_BYTES} bytes`), text.slice(0, MAX_DOC_BYTES)) : text;
+          docs.set(uri, stored);
           scheduleAnalyze(uri);
         }
       } else if (msg.method === "textDocument/diagnostic") {
@@ -1535,7 +1579,7 @@ ${j}`);
         } else {
           (async () => {
             if (inFlight.has(uri)) {
-              send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: [] } });
+              send({ jsonrpc: "2.0", id: msg.id, error: { code: -32802, message: "analysis in progress" } });
               return;
             }
             inFlight.add(uri);
@@ -1545,7 +1589,8 @@ ${j}`);
               const r = await pipeline(file, src, true);
               send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: r.cards.map((c) => toDiagnostic(c, src, 0)) } });
             } catch (e) {
-              send({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `InternalError: ${e.message.slice(0, 200)}` } });
+              const msgText = String(e?.message ?? e).slice(0, 200);
+              send({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `InternalError: ${msgText}` } });
             } finally {
               inFlight.delete(uri);
             }
@@ -1570,6 +1615,8 @@ ${j}`);
           continue;
         docs.delete(uri);
         seq.delete(uri);
+        inFlight.delete(uri);
+        dirty.delete(uri);
         const pend = pending.get(uri);
         if (pend) {
           clearTimeout(pend);

@@ -167,6 +167,9 @@ function lawCount(p: string): number {
     const hit = LAW_COUNT_CACHE.get(p);
     if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.laws;
     const n = lawCountUncached(p);
+    // AUDIT-9 FIX — the map grew without bound in a long-lived server (one entry per probed
+    // path). Bounded: evict the oldest insertion past 128.
+    if (LAW_COUNT_CACHE.size >= 128) { const first = LAW_COUNT_CACHE.keys().next().value; if (first) LAW_COUNT_CACHE.delete(first); }
     LAW_COUNT_CACHE.set(p, { mtimeMs: st.mtimeMs, size: st.size, laws: n });
     return n;
   } catch { return -1; }

@@ -119,7 +119,10 @@ export function lawCard(kept: JudgedLaw[] | null | undefined, totalCandidates: n
   return clean.slice(0, 32).map(({ law, p }) => {
     const measured = typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     const prob = measured ? `relevance ${p.toFixed(2)}` : "relevance unread";
-    const of = tot > n ? ` · kept ${n} of ${tot} candidates` : "" + (n > shown ? ` · shown ${shown} of ${n}` : "");
+    // AUDIT-2 FIX — the ternary rendered ONE branch: with tot=50, n=40, shown=32 the "shown 32
+    // of 40" disclosure vanished while the title claimed 40 kept — a measured-count fabrication.
+    // Both disclosures CONCATENATE.
+    const of = (tot > n ? ` · kept ${n} of ${tot} candidates` : "") + (n > shown ? ` · shown ${shown} of ${n}` : "");
     return {
       shape: "LAW" as const,
       title: `${cap(law.name, 80)} — governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
@@ -332,8 +335,17 @@ export function callersCard(callers: unknown): FactCard | null {
 // FIX (audit round-14: ONE stale-code extractor) — the duplicated regex had a third
 // alternative ([A-Z0-9_]+) that subsumed the first two, so any HELLO_WORLD became a code and
 // PLUTUS_NO_[A-Z]+ truncated digits/underscores. One helper: the leading SCREAMING_SNAKE token.
-const staleCode = (raw: string, dflt = "PLUTUS_NO_STORE"): string =>
-  /^([A-Z][A-Z0-9_]*)/.exec(raw.trim())?.[1]?.slice(0, 32) ?? dflt;
+// AUDIT-8 FIX — the extractor accepted ANY leading SCREAMING_SNAKE token (a future "FOO: …"
+// became a filterable [FOO] title). The codes are ALLOWLISTED; anything else maps to a generic
+// code with the raw text confined to the reason row (the claim was: an allowlisted set).
+const STALE_CODES: readonly string[] = Object.freeze([
+  "PLUTUS_NO_STORE", "PLUTUS_NO_ROOT", "JEVK5_DOWN", "JUDGE_DEGRADED", "JUDGE_NO_NODES",
+  "JUDGE_ANSWER_COUNT", "L2_TIMEOUT", "L2_OVERSIZE", "L2_FRAME_TOO_LARGE", "L2_WRITE",
+]);
+const staleCode = (raw: string, dflt = "PLUTUS_NO_STORE"): string => {
+  const head = /^([A-Z][A-Z0-9_]*)/.exec(raw.trim())?.[1] ?? "";
+  return STALE_CODES.includes(head) ? head : dflt;
+};
 
 /** STALE — a named refusal (no graph, judge down). A loud card, never a silent pass. */
 export function staleCard(reason: string | null | undefined): FactCard {

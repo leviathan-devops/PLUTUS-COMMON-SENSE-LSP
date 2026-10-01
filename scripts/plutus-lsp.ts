@@ -12,7 +12,7 @@
  * overridable via PLUTUS_LSP_RECEIPT.
  */
 
-import { readFileSync, appendFileSync, mkdirSync, existsSync, statSync, realpathSync } from "node:fs";
+import { readFileSync, appendFileSync, mkdirSync, existsSync, statSync, realpathSync, openSync, readSync, closeSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadStore, lawsForHunk, declarationsIn, callersOf, readL2, l2SocketFor, isPlutusScoped } from "../src/plutus-lsp/store.ts";
@@ -65,20 +65,31 @@ setInterval(receiptFlush, 500).unref?.();
 // read with a BOUNDED window (the last ~256KB), then the file is TRUNCATED (writeFileSync
 // REPLACES) so the cap holds.
 const receipt = (line: string) => { receiptBuf.push(`${new Date().toISOString()} ${clean(line)}\n`); if (receiptBuf.length > 200) receiptFlush(); };
-try {
-  if (existsSync(RECEIPT) && statSync(RECEIPT).size > 12 * 1024 * 1024) {
+// F-9 (round-21: LOUD + callable) — the first two cuts were silent (a swallowed exception
+// left the growth undetected). The rotation is now a function: it runs at import AND before
+// every exit, and it reports its outcome to stderr (never silently best-effort).
+function rotateReceipt(): void {
+  try {
+    if (!existsSync(RECEIPT)) return;
+    const size = statSync(RECEIPT).size;
+    if (size <= 12 * 1024 * 1024) return;
     const fd = openSync(RECEIPT, "r");
     let tail = "";
     try {
-      const size = statSync(RECEIPT).size;
       const start = Math.max(0, size - 256 * 1024);
       const b = Buffer.alloc(size - start);
       const n = readSync(fd, b, 0, b.length, start);
       tail = b.subarray(0, Math.max(0, n)).toString("utf8").split("\n").slice(-2000).join("\n");
     } finally { closeSync(fd); }
     writeFileSync(RECEIPT, `--- RECEIPT ROTATED (12MB cap) ---\n${tail}\n`);
+    // AUDIT-1b: the sibling stderr LOG had NO rotation at all — cap it too
+    try { if (existsSync(LOG) && statSync(LOG).size > 4 * 1024 * 1024) writeFileSync(LOG, ""); } catch { /* best effort */ }
+    try { process.stderr.write(`RECEIPT_ROTATED: ${size} -> ${statSync(RECEIPT).size} bytes\n`); } catch { /* stderr gone */ }
+  } catch (e) {
+    try { process.stderr.write(`RECEIPT_ROTATE_FAIL: ${(e as Error).message}\n`); } catch { /* stderr gone */ }
   }
-} catch { /* best-effort */ }
+}
+rotateReceipt();
 setJudgeReceipt((line: string) => receipt(line));   // FIX (audit: loud library) — the judge's
 // CHAIN/PARTITION notes land in the same receipt file as the pipeline's own lines.
 
@@ -157,7 +168,12 @@ export async function pipeline(file: string, source: string, useJudge = true): P
       // truncated tail is visible in forensics, not just in the return type.
       receipt(`RELEVANCE judged=${rel.judged}/${rel.total} dropped=${rel.dropped}`);
       const part = partitionByRelevance(candidates, rel.scored);
-      all = part.relevant;
+      // AUDIT-3 FIX — the UNKNOWN split (judge answered, unreadable) was DISCARDED: when every
+      // score was unreadable, relevant was empty and the pipeline exited silently — the judge's
+      // failure to decide read as "not relevant" (deciding without evidence). Unknowns now ride
+      // the card set as unread, and the count is receipted.
+      all = [...part.relevant, ...part.unknown];
+      if (part.unknown.length > 0) receipt(`RELEVANCE unknown=${part.unknown.length} (judge-unreadable — carried as unread)`);
       relevance = rel.scored.map((r) => ({ lawId: r.lawId, p: r.p }));
       // join by lawId (identity), never indexOf on law objects (aliasing + O(n²))
       const byId = new Map(rel.scored.map((r) => [r.lawId, r.p]));
@@ -223,6 +239,7 @@ function applyRange(doc: string, f: { range: { start: { line: number; character:
 
 const exitFlushed = (code: number): void => {
   try { receiptFlush(); } catch { /* best-effort */ }
+  rotateReceipt();   // round-21: the cap holds on every terminating path
   // FIX (audit round-15 CRITICAL: HALT when there is no chain) — the round-14 drain-only
   // version SCHEDULED the exit and returned, so the selftest's failure paths FELL THROUGH
   // (`if (!file) { exitFlushed(2); }` then readFileSync(undefined)). With no send chain (every
@@ -340,7 +357,10 @@ if (process.argv.includes("--stdio")) {
     // FIX (r19 H1: symlink + cwd gaps) — resolve() is cwd-dependent for RELATIVE inputs and
     // never follows symlinks. An LSP URI is always absolute; a symlink pointing OUT of the
     // allowed roots passed the prefix check. realpathSync (when the path exists) closes both.
-    if (!np.startsWith("/")) throw new Error(`PATH_NOT_ABSOLUTE: ${np.slice(0, 60)}`);
+    // round-20 M: accept a POSIX absolute OR a Windows drive path (the old POSIX-only check
+    // threw for every path on Windows — portability).
+    const isAbs = np.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(np);
+    if (!isAbs) throw new Error(`PATH_NOT_ABSOLUTE: ${np.slice(0, 60)}`);
     let rp = np;
     try { rp = realpathSync(np); } catch { /* not present yet — the prefix check stands */ }
     if (SYSTEM_DENY.test(rp)) throw new Error(`PATH_REFUSED: ${rp.slice(0, 60)}`);
@@ -549,7 +569,15 @@ if (process.argv.includes("--stdio")) {
           text = docs.get(uri) ?? "";
           for (const f of ranged as Array<{ range?: { start: { line: number; character: number }; end: { line: number; character: number } }; text?: unknown }>) text = applyRange(text, f);
         }
-        if (uri) { docs.set(uri, text); scheduleAnalyze(uri); }
+        // AUDIT-6 FIX — an unbounded per-uri doc store: a multi-MB paste sat in the Map and
+        // every debounced keystroke ran regex+tokenization over the WHOLE text on one thread.
+        // Cap the stored text (the head is what the detector scans; the truncation is receipted).
+        const MAX_DOC_BYTES = 1 * 1024 * 1024;
+        if (uri) {
+          const stored = text.length > MAX_DOC_BYTES ? (receipt(`DOC_TRUNCATED ${uri}: ${text.length} -> ${MAX_DOC_BYTES} bytes`), text.slice(0, MAX_DOC_BYTES)) : text;
+          docs.set(uri, stored);
+          scheduleAnalyze(uri);
+        }
       } else if (msg.method === "textDocument/diagnostic") {
         // F-2 FIX (implement the pull path) — the old code advertised diagnosticProvider
         // while no handler existed (-32601 on every pull). The pull path now runs the SAME
@@ -563,14 +591,22 @@ if (process.argv.includes("--stdio")) {
           // debounced path as the push; the response carries the request's id).
           // round-20 M: the pull reuses the SINGLE-FLIGHT guard (a 6s chain cannot stack)
           void (async () => {
-            if (inFlight.has(uri)) { send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: [] } }); return; }
+            // AUDIT-4 FIX — answering items:[] ("clean") mid-analysis cleared real violations
+            // on a polling client. An in-progress pull is an ERROR (the client retries), never
+            // a clean empty (the same keep-last-good law the push path holds).
+            if (inFlight.has(uri)) { send({ jsonrpc: "2.0", id: msg.id, error: { code: -32802, message: "analysis in progress" } }); return; }
             inFlight.add(uri);
             try {
               const file = fileOf(uri);
               const src = docs.get(uri) ?? "";
               const r = await pipeline(file, src, true);
               send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: r.cards.map((c) => toDiagnostic(c, src, 0)) } });
-            } catch (e) { send({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `InternalError: ${(e as Error).message.slice(0, 200)}` } }); }
+            } catch (e) {
+              // AUDIT-7 FIX — a non-Error rejection (string/undefined) made `.message.slice`
+              // throw INSIDE the catch: the guaranteed answer became an unhandled rejection.
+              const msgText = String((e as Error)?.message ?? e).slice(0, 200);
+              send({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `InternalError: ${msgText}` } });
+            }
             finally { inFlight.delete(uri); }
           })();
         }
@@ -596,7 +632,11 @@ if (process.argv.includes("--stdio")) {
         const uri = typeof rawUri2 === "string" ? rawUri2 : "";
         if (uri === "") continue;
         docs.delete(uri);
-        seq.delete(uri);   // FIX (audit:222): the per-uri seq entry is cleaned on close
+        seq.delete(uri);
+        // AUDIT-5 FIX — inFlight/dirty were NOT cleared on close: a close mid-chain with dirty
+        // set re-scheduled an analyze for a CLOSED document (republishing + 6-20s of judge work).
+        inFlight.delete(uri);
+        dirty.delete(uri);   // FIX (audit:222): the per-uri seq entry is cleaned on close
         const pend = pending.get(uri);
         if (pend) { clearTimeout(pend); pending.delete(uri); }
         send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: [] } });

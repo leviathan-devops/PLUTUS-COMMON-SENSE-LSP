@@ -374,3 +374,41 @@ test("A39_pull_diagnostic_implemented (the F-2 capability-lie fix)", async () =>
   expect(server).toContain('msg.method === "textDocument/diagnostic"');
   expect(server).toContain("kind: \"full\"");
 });
+
+test("A40_receipt_rotation_imports_complete (the independent audit's HIGH)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  const importLine = server.split("\n").find((l) => l.includes('from "node:fs"')) ?? "";
+  for (const sym of ["openSync", "readSync", "closeSync", "writeFileSync"]) {
+    expect(importLine).toContain(sym);   // the rotation's fs functions MUST be imported
+  }
+  expect(server).toContain("RECEIPT_ROTATE_FAIL");   // and the failure is LOUD, never silent
+});
+
+test("A41_disclosures_concatenate (the audit's kept/shown bug)", async () => {
+  const fs = await import("node:fs");
+  const cards = fs.readFileSync(`${import.meta.dir}/../src/plutus-lsp/cards.ts`, "utf8");
+  // both disclosures must render when both conditions hold (never one ternary)
+  expect(cards).toContain('(tot > n ? ` · kept ${n} of ${tot} candidates` : "") + (n > shown');
+});
+
+test("A42_stale_codes_allowlisted (the audit's code-space bug)", async () => {
+  const fs = await import("node:fs");
+  const cards = fs.readFileSync(`${import.meta.dir}/../src/plutus-lsp/cards.ts`, "utf8");
+  expect(cards).toContain("STALE_CODES.includes(head)");
+});
+
+test("A43_didClose_clears_inflight (the audit's leak)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  const close = server.slice(server.indexOf('didClose'), server.indexOf('didClose') + 600);
+  expect(close).toContain("inFlight.delete(uri)");
+  expect(close).toContain("dirty.delete(uri)");
+});
+
+test("A44_pull_never_false_clean (the audit's false-clean)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  expect(server).toContain("analysis in progress");   // an error, never items:[]
+  expect(server).toContain("MAX_DOC_BYTES");
+});
