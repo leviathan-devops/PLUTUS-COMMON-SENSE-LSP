@@ -212,3 +212,18 @@ Each round: every BLOCKING finding adjudicated + fixed; every fix pinned. Batter
 - **The artifacts:** `artifacts/sg-ocr-round21.json` (the reason + the retry condition).
 
 ## AUDIT GATE: BLOCKED (provider-unavailable) — artifacts/sg-ocr-round21.json
+
+## TEST RESULT + AUDIT GATE — 2026-10-01 — the INDEPENDENT audit (round 22)
+
+### SCRIPT — audit gate (via the host reviewer agent; the ocr lane is provider-down)
+- **The run:** two fresh-context subagents (a `reviewer` + a `security-reviewer`) with ZERO build
+  context, given only the 4 files and the 5-law contract. This is the zero-trust STEP 5
+  independent audit (the ocr lane could not run: Go 403, zen-free 429).
+- **The raw output:** `1 high, 5 medium, 3 low` — the HIGH: "Receipt rotation dead: missing fs
+  imports make the 12MB cap unenforced" (it independently found the SAME bug I was tracing).
+- **The verdict:** FAIL at intake → **ALL 9 FIXED + PINNED this turn** (A40-A44). The auditor's
+  clean probes: no crash-on-malformed-input, no traversal/symlink escape, no silent-empty store
+  refusal, no fail-open verdict path.
+- **The artifacts:** `artifacts/sg-ocr-round22.json`; the full report at `agent://IndependentAudit`.
+
+## AUDIT GATE: FAIL at intake (0c/1h) → all fixed → battery 57/0 — artifacts/sg-ocr-round22.json

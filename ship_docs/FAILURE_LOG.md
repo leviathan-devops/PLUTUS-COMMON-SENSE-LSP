@@ -125,3 +125,25 @@ one subsystem re-introduces defects; the audit count is not a convergence proof.
   battery + the derailment suite + the probes, NOT by the audit.
 - **Disposition:** BLOCKED — recorded with its retry condition (`artifacts/sg-ocr-round21.json`).
   NO SHIP-READY CLAIM. The retry fires when the Go subscription is active or the free lane resets.
+
+### F-15 — the independent audit's HIGH: the receipt rotation was DEAD for two rounds (2026-10-01)
+- **What happened:** the F-9 rotation called `openSync/readSync/closeSync/writeFileSync` with NONE
+  of them imported. Every attempt threw `ReferenceError: openSync is not defined` INSIDE a silent
+  `catch { /* best-effort */ }` — the 12MB cap never held and the file grew unbounded.
+- **Found:** TWICE independently — my own F-9 probe (which I wrote because the first fix "looked
+  right") and the independent reviewer subagent (its priority-1 finding).
+- **Root cause:** two compounding classes: (a) a silent catch around a best-effort side task; (b)
+  a fix that used functions the module never imported (the build does NOT catch this — it is a
+  runtime-only ReferenceError).
+- **Impact:** the receipt grew without bound; the failure was invisible for two rounds.
+- **Disposition:** FIXED+PROVEN — imports completed, the rotation made LOUD
+  (`RECEIPT_ROTATE_FAIL`), the sibling stderr LOG capped too, pinned (A40), proven live
+  (`13107276 -> 155958 bytes`).
+
+### F-16 — the "best-effort catch" as a class (2026-10-01)
+- **What happened:** the same silent-catch pattern (5 sites) hid the dead rotation AND would hide
+  any future failure of the cap, the L2 probe, the receipt writer, and the degraded card.
+- **Root cause:** `catch { /* best-effort */ }` turns a LOUD FAIL into a SILENT one — the
+  loud-fail-or-clear-pass law violated at the side-effect layer.
+- **Disposition:** FIXED for the rotation (loud). The remaining sites are named here; each is
+  logged as a candidate (the skill's declined-finding rule: silence reads as "never found").
