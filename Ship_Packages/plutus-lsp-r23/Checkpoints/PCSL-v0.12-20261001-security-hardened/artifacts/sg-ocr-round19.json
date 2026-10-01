@@ -1,0 +1,19 @@
+{
+  "gate": "GATE: FAIL (0 critical, 5 high)",
+  "session_id": "c8027864-47cf-47e7-93f5-bba3f17dcfd8",
+  "scope": "scan src/plutus-lsp/store.ts,src/plutus-lsp/judge.ts,src/plutus-lsp/cards.ts,scripts/plutus-lsp.ts",
+  "files_reviewed": 4,
+  "findings": 27,
+  "critical": 0,
+  "high": 5,
+  "medium": 15,
+  "low": 7,
+  "blocking": [
+    "high scripts/plutus-lsp.ts:273 path confinement symlink/cwd gap",
+    "high scripts/plutus-lsp.ts:149 in-flight judge chains pile up",
+    "high src/plutus-lsp/store.ts:118 head4 FIFO hang reintroduced",
+    "high src/plutus-lsp/cards.ts:43 cap() can throw via toString",
+    "high src/plutus-lsp/cards.ts:200 attribution flag decoupled from picked law"
+  ],
+  "dist_sha": "3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155"
+}

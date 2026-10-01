@@ -1,0 +1,16 @@
+{
+ "run": "THE FINAL CERTIFICATION (7312b76c5d3994df)",
+ "container": "pcsl-final-cert",
+ "deploySha": "7312b76c5d3994df",
+ "deployShaMatch": true,
+ "scenarios": [
+  {"name":"S1 the deploy sha","kind":"POSITIVE","passToken":"7312b76c5d3994df","passTokenMatch":true,"verdict":"PASS"},
+  {"name":"S2 the 7-node chain","kind":"POSITIVE","passToken":"P5=","passTokenMatch":true,"toolResultContext":"the vector: ['P1','P2','P3','P4','P5','P6','P7']","verdict":"PASS"},
+  {"name":"S3 the violation","kind":"POSITIVE","passToken":"plutus/violation","passTokenMatch":true,"verdict":"PASS"},
+  {"name":"S4 the callers card","kind":"POSITIVE","passToken":"plutus/callers","passTokenMatch":true,"verdict":"PASS"},
+  {"name":"S5 the refusal","kind":"NEGATIVE","passToken":"PLUTUS_NO_STORE","passTokenMatch":true,"verdict":"PASS"},
+  {"name":"A1 the down judge","kind":"ADVERSARIAL","passToken":"JEVK5_DOWN","passTokenMatch":true,"verdict":"PASS"},
+  {"name":"A2 the malformed frame","kind":"ADVERSARIAL","passToken":"serverInfo","passTokenMatch":true,"verdict":"PASS"}
+ ],
+ "overallVerdict": "PASS — 7/7 the FINAL dist certified"
+}

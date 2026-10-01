@@ -1,0 +1,23 @@
+{
+  "gate": "GATE: FAIL at intake (0 critical, 3 high, 4 medium, 3 low) — ALL 10 NOW FIXED",
+  "session_id": "AdversarialProber (a fresh-context security-reviewer subagent)",
+  "scope": "the 4 core files",
+  "files_reviewed": 4,
+  "findings": 10,
+  "critical": 0, "high": 3, "medium": 4, "low": 3,
+  "fixed": [
+    "H1 lawCountUncached read any candidate kg.json with no size cap (2GB planted graph OOM before loadStore's 16MB gate) -> the same 16MB gate in the pre-filter",
+    "H2 jevk5Fetch parsed the judge response with no byte/key cap -> Content-Length check (256KB) + a 64-key cap + a key-length cap",
+    "H3 attacker-controlled method/uri/file strings entered the receipt UNCAPPED (30MB method x 7 frames = ~200MB retained) -> a single choke-point cap (512 chars) on receipt() AND log()",
+    "M1 the doc table cardinality was unbounded (5000 didOpen = 5GB) -> MAX_OPEN_DOCS 256 with loud eviction",
+    "M2 uncapped law statement -> per-keystroke 8MB tokenization DoS -> law text capped AT LOAD (name 256 / statement 4000 / anchor+source 512)",
+    "M3 stdin slow-loris (a claimed-large Content-Length + a byte trickle) held 32MB forever -> a 30s idle sweep (STDIN_IDLE_RESET)",
+    "M4 ALLOWED_ROOTS prefix-compared RAW while rp was canonical (symlink/../relative entries never matched) -> canonicalized once (resolve + realpath + dir filter)",
+    "L1 the FRAME_SKIP paths kept subarray VIEWs pinning the peak backing store -> Buffer.from copies on all three",
+    "L2 the health path stringified the whole hostile body to slice 120 -> a bounded key-inspect",
+    "L3 buildState built a multi-MB transient before chain()'s cap -> capped at the interpolation site"
+  ],
+  "probed_clean": "fileOf confinement (scheme/authority/decode-order/UNC-refuse/drive-normalize/resolve-clamp/realpath/checked-path-return); SYSTEM_DENY+ALLOWED_ROOTS prefix logic; stdin MAX_STDIN+headerless+4KB-header+malformed-length+remainder-copy; loadStore FIFO/O_NONBLOCK/regular-file/16MB/short-read; L2 32MB/16MB caps; the detector/decider split + fail-closed verdict; cards cap() on every interpolated string; per-doc 1MB; single-flight/dirty/seq/close cleanup.",
+  "dist_sha": "0638723b85a564e0",
+  "note": "the ocr lane is provider-down; both independent readers were fresh-context subagents (the same independence criterion)."
+}

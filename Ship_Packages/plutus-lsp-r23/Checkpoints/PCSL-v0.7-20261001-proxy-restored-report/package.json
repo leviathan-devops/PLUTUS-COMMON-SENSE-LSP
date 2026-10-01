@@ -1,0 +1,11 @@
+{
+  "name": "plutus-common-sense-lsp",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The reflexive Plutus canon LSP — reads the Plutus knowledge graphs, judges via JevK5, informs on every write.",
+  "scripts": {
+    "selftest": "bun scripts/plutus-lsp.ts --selftest",
+    "test": "bun test tests/"
+  },
+  "devDependencies": { "@types/node": "latest", "typescript": "latest" }
+}

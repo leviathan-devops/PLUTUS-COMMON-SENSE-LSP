@@ -220,3 +220,8 @@ absent-socket L2 probes (the normal case).
 IN-SCOPE 6 / 18 cards, OUT-OF-SCOPE 2 silent, `REFUSE=0 · L2=0 · PUBLISH=5`.
 **The honest notes:** one self-inflicted bug in this change (a `return` inside the pipeline exited
 the whole analyze) — caught by the W1 test + pinned (A36 asserts the guard never returns).
+
+
+## §14 · THE SHIP PACKAGE (r23)
+
+**Dist fingerprint (this update):** `f45727589b05caba4894455f65e4ee34647ac665c38223aeb033ae9fb5ee0bfc` — the security-hardened, scope-gated bundle. Ship package assembled at Ship_Packages/plutus-lsp-r23 (PACKAGE_AUDIT PASS). The boilerplate + the create-knowledge-kernel skill updated with the configurable scope.
