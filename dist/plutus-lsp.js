@@ -2,7 +2,7 @@
 // @bun
 
 // scripts/plutus-lsp.ts
-import { readFileSync, appendFileSync, mkdirSync } from "fs";
+import { readFileSync, appendFileSync, mkdirSync, existsSync as existsSync2 } from "fs";
 import { dirname as dirname2, resolve as resolve2 } from "path";
 import { fileURLToPath } from "url";
 
@@ -1017,6 +1017,8 @@ async function pipeline(file, source, useJudge = true) {
   } catch (e) {
     const msg = e.message;
     receipt2(`REFUSE ${msg.split(":")[0]} file=${file}`);
+    if (msg.startsWith("PLUTUS_NO_ROOT"))
+      return { tokens: [], cards: [], refused: msg, vector: {} };
     const sc = staleCard(msg);
     return { tokens: [sc.source], cards: [sc], refused: msg, vector: {} };
   }
@@ -1025,6 +1027,8 @@ async function pipeline(file, source, useJudge = true) {
   const candidates = lawsForHunk(store, file, decls, hunk, 12);
   try {
     const sock = l2SocketFor(store.root);
+    if (!existsSync2(sock))
+      throw new Error(`L2 socket absent (${sock})`);
     readL2(sock, 400).then((l2) => receipt2(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`), (e) => receipt2(`L2_THROW: ${e.message}`));
   } catch (e) {
     receipt2(`L2_THROW: ${e.message}`);

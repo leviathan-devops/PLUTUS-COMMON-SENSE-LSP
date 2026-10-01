@@ -108,3 +108,17 @@ LESSON: two compounding bugs — a scheduled exit AND a forbidden top-level retu
 - **THE VERIFICATION:** the r19 artifact (`artifacts/sg-ocr-round19.json`) + the FAIL verdict line.
 - **THE LESSON:** the confinement subsystem is the defect farm — every fix there needs its own
   adversarial pin (symlink, `..`, UNC, drive, empty, non-string) before the round closes.
+
+## EN-14 — the misfire fixes (M1/M2/M3) (2026-10-01)
+- **THE FINDING:** the LSP over-fires — 49 REFUSE rows (32 on `.md`), 197 dead `L2 PLUTUS_NO_STORE`
+  rows, and refusals rendered as visible Warnings on non-canon files. ~2:1 noise-to-signal.
+- **THE ROOT CAUSE (traced):** (M1) `lsp.json` `fileTypes` includes `.md`, so every markdown write
+  in a non-graph-root tree emits a refusal; (M2) the L2 probe fires unconditionally (the socket is
+  keyed to the root, but L1 often resolved via the env override to a different tree); (M3) the
+  refusal and "canon genuinely unavailable" share one Warning card — out-of-scope != broken.
+- **THE FIX:** (M1) dropped `.md` from `fileTypes`; (M2) gate the L2 probe on `existsSync(sock)`;
+  (M3) `PLUTUS_NO_ROOT` (no marker = out of scope) returns EMPTY tokens — only a marker-bearing
+  root with a missing store emits the STALE card. Pinned by A35/A36.
+- **THE VERIFICATION:** battery 48/0/160; derailment suite 6/6; bundle rebuilt `c624683bd9b220c1`.
+- **THE LESSON:** a reflex registered on the WRONG file types over-fires; the "no marker" and
+  "marker but no store" states are DIFFERENT and must not share a card.

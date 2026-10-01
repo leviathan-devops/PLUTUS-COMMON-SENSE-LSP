@@ -12,7 +12,7 @@
  * overridable via PLUTUS_LSP_RECEIPT.
  */
 
-import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadStore, lawsForHunk, declarationsIn, callersOf, readL2, l2SocketFor } from "../src/plutus-lsp/store.ts";
@@ -81,8 +81,10 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   } catch (e) {
     const msg = (e as Error).message;
     receipt(`REFUSE ${msg.split(":")[0]} file=${file}`);
-    // FIX F5 (audit-bravo: staleCard had zero callers): a refused store emits the STALE card
-    // so the agent SEES the graph problem instead of silence.
+    // FIX (M3: out-of-scope = SILENT) — PLUTUS_NO_ROOT means the file is simply NOT under any
+    // graph root (a doc, a foreign tree): out of scope, emit NOTHING. Only a ROOT that carries a
+    // marker but whose store is MISSING (PLUTUS_NO_STORE) is a real defect worth a STALE card.
+    if (msg.startsWith("PLUTUS_NO_ROOT")) return { tokens: [], cards: [], refused: msg, vector: {} };
     const sc = staleCard(msg);
     return { tokens: [sc.source], cards: [sc], refused: msg, vector: {} };
   }
@@ -101,6 +103,10 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   // escaped the .then(_, onRejected) handler. The socket path resolves inside try first.
   try {
     const sock = l2SocketFor(store.root);
+    // FIX (M2: gate the L2 probe) — the old code probed L2 unconditionally (197 dead
+    // PLUTUS_NO_STORE rows: the socket is keyed to the root, but L1 often resolved via the
+    // PLUTUS_L1_PATH env override to a DIFFERENT tree). Probe only when the socket EXISTS.
+    if (!existsSync(sock)) throw new Error(`L2 socket absent (${sock})`);
     void readL2(sock, 400).then(
       (l2) => receipt(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`),
       (e) => receipt(`L2_THROW: ${(e as Error).message}`),

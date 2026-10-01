@@ -168,3 +168,14 @@ HIGH; all are recorded. NO SHIP-READY CLAIM IS MADE — the last audit gate was 
   findings each have an OPEN F entry.
 **The honest notes:** the CRITICAL class stays eliminated (0 critical, 3rd round running);
   the 5 highs are queued, not rushed; NO SHIP-READY CLAIM.
+
+## §10 · THE MISFIRE FIXES (2026-10-01 — M1/M2/M3)
+
+**The built:** three misfire fixes from the observed receipt (the over-fire).
+**The why:** ~2:1 noise-to-signal (49 REFUSE + 197 L2 vs 124 PUBLISH) — the reflex was drowning
+its own signal.
+**The how:** (M1) drop `.md` from `lsp.json` fileTypes; (M2) gate the L2 probe on the socket
+existing; (M3) `PLUTUS_NO_ROOT` → silent (out-of-scope), only a marker-bearing root emits STALE.
+**The evidence:** battery 48/0/160; derailment 6/6; bundle `c624683bd9b220c1`.
+**The honest notes:** the fixes are pinned (A35/A36); the remaining M4-M6 (receipt rotation,
+single-flight) are recorded in the boilerplate's MISFIRES.md.

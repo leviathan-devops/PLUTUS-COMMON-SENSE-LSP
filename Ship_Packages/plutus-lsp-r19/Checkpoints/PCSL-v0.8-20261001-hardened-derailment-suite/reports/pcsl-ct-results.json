@@ -1,0 +1,21 @@
+{
+  "container": "pcsl-ct-01",
+  "image": "mimo-ct:master",
+  "dist": "/tmp/plutus-lsp.js",
+  "distSha": "f8e8349b9fa568a1",
+  "distShaMatch": true,
+  "planHash": "8006d7d5",
+  "authProbe": "ABSENT (no key in the image) — the deterministic scenarios ran via the exec channel (the ground-truth channel)",
+  "scenarios": [
+    {"name": "S1 · the clean-env named refusal", "kind": "POSITIVE", "passToken": "PLUTUS_NO_ROOT", "passTokenMatch": true, "failToken": "SELFTEST OK", "failTokenAbsent": true, "toolResultContext": "refused: PLUTUS_NO_ROOT: no root marker … above /tmp/fixture.ts", "verdict": "PASS"},
+    {"name": "S1b · the specific PLUTUS_NO_STORE", "kind": "POSITIVE", "passToken": "PLUTUS_NO_STORE", "passTokenMatch": true, "failToken": "SELFTEST OK", "failTokenAbsent": true, "toolResultContext": "PLUTUS_NO_STORE (a root with a marker, no kg.json)", "verdict": "PASS"},
+    {"name": "S2 · the fixture graph -> the cards", "kind": "POSITIVE", "passToken": "SELFTEST OK", "passTokenMatch": true, "failToken": "NO TOKENS", "failTokenAbsent": true, "toolResultContext": "SELFTEST OK — 3 card(s), tokens: plutus/law,plutus/tier,plutus/stale", "verdict": "PASS"},
+    {"name": "S3 · a fact-free file -> NO card", "kind": "NEGATIVE", "passToken": "NO-LAW", "passTokenMatch": true, "failToken": "plutus/violation", "failTokenAbsent": true, "toolResultContext": "NO TOKENS — the reflex produced no card; receipt: NO-LAW file=/tmp/fx/empty.ts decls=0", "verdict": "PASS"},
+    {"name": "S4 · the stdio LSP handshake", "kind": "NEGATIVE", "passToken": "serverInfo", "passTokenMatch": true, "failToken": "crash", "failTokenAbsent": true, "toolResultContext": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"capabilities\":{…},\"serverInfo\":{\"name\":\"plutus-lsp\",\"version\":\"0.1.0\"}}}", "verdict": "PASS"},
+    {"name": "A1 · the down judge -> JEVK5_DOWN (the named refusal)", "kind": "ADVERSARIAL", "passToken": "JUDGE_DOWN", "passTokenMatch": true, "failToken": "a fabricated pass", "failTokenAbsent": true, "toolResultContext": "receipt: PUBLISH n=3 … verdict=JUDGE_DOWN (the judge absent in the container)", "verdict": "PASS"},
+    {"name": "A2 · the malformed frame (the bound holds)", "kind": "ADVERSARIAL", "passToken": "serverInfo", "passTokenMatch": true, "failToken": "OOM", "failTokenAbsent": true, "toolResultContext": "ALIVE: True | the subsequent valid initialize answered (id:2)", "verdict": "PASS"}
+  ],
+  "phaseE": {"shaMatch": true, "scenariosExecuted": "7/7", "tokensAsserted": "7/7", "circularPasses": 0, "timeouts": 0, "blastRadius": "store/judge/cards/server + the LSP protocol", "adversarialBehaved": true, "containerAlive": true, "artifactWritten": true},
+  "overallVerdict": "PASS — 7/7 scenarios; the deploy sha matched; no timeouts; the container alive",
+  "residual": "The container has NO JevK5 :8090 — the live chain cannot run there (the named refusal is proven instead). The model auth is absent (the deterministic exec channel was used)."
+}

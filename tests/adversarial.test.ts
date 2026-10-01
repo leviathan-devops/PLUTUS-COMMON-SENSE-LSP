@@ -324,3 +324,17 @@ test("A34_unknown_method_answered (round-15 MethodNotFound)", async () => {
   const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
   expect(server).toContain("-32601");
 });
+
+test("A35_out_of_scope_is_silent (M3 misfire fix)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  // PLUTUS_NO_ROOT (no marker = out of scope) must return EMPTY tokens, never a STALE card
+  expect(server).toContain("if (msg.startsWith(\"PLUTUS_NO_ROOT\")) return { tokens: [], cards: [], refused: msg, vector: {} }");
+});
+
+test("A36_l2_probe_gated (M2 misfire fix)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  // the L2 probe must be gated on the socket existing (no more 197 dead rows)
+  expect(server).toContain("L2 socket absent");
+});
