@@ -21,9 +21,9 @@
 // emits it — the tier now rides inside each law card's TIER row. A consumer filtering on
 // `plutus/tier` alone will wait forever; filter on `plutus/law` instead. Kept, not removed,
 // so existing filters do not break.
-// F-10 FIX (the dead token RETIRED) — `plutus/tier` was declared and emitted by NO card
-// (a consumer filtering on it waited forever). The tier rides each LAW card's TIER row, so the
-// bare token is retired rather than fabricated. The set is the exact emit surface: 6 tokens.
+// F-10 FIX (round-20 reconciled) — `plutus/tier` is RETIRED: it was declared and emitted by NO
+// card (a consumer filtering on it waited forever). The tier rides each LAW card's TIER row.
+// This set IS the exact emit surface: 6 tokens. Do NOT filter on plutus/tier.
 export const PLUTUS_LSP_TOKENS = [
   "plutus/law",       // one governing law, with the judge's relevance probability
   "plutus/violation", // the judged breach of a governing law
@@ -115,10 +115,11 @@ export function lawCard(kept: JudgedLaw[] | null | undefined, totalCandidates: n
   // Infinity rendered `kept n of Infinity candidates`. Only a finite non-negative int counts.
   const tot = typeof totalCandidates === "number" && Number.isFinite(totalCandidates) && totalCandidates >= 0 ? Math.floor(totalCandidates) : 0;
   const n = clean.length;
+  const shown = Math.min(n, 32);   // round-20 M: the cap is DISCLOSED (n stays the true count)
   return clean.slice(0, 32).map(({ law, p }) => {
     const measured = typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     const prob = measured ? `relevance ${p.toFixed(2)}` : "relevance unread";
-    const of = tot > n ? ` · kept ${n} of ${tot} candidates` : "";
+    const of = tot > n ? ` · kept ${n} of ${tot} candidates` : "" + (n > shown ? ` · shown ${shown} of ${n}` : "");
     return {
       shape: "LAW" as const,
       title: `${cap(law.name, 80)} — governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
@@ -149,7 +150,10 @@ export function lawCard(kept: JudgedLaw[] | null | undefined, totalCandidates: n
 // file being written; the row names THAT.
 export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | null | undefined, targetFile?: string): FactCard | null {
   // FIX (audit: null guard) — a direct caller passing null must not throw and lose every card.
-  if (!v || !kept) return null;
+  // FIX (round-20 H7: JUDGE_DOWN is INDEPENDENT of `kept`) — the old guard `if (!v || !kept)`
+  // dropped the STALE card when kept was null/undefined, though a dead judge never depends on
+  // relevance results. The refusal must be LOUD even with no laws. Gate on `!v` alone.
+  if (!v) return null;
   const vector: Record<string, number> = (v.vector && typeof v.vector === "object" && !Array.isArray(v.vector)) ? v.vector : {};
   // FIX (audit: finite-only pct) — NaN/Infinity render as "n/a", never "NaN"/"Infinity" in a title.
   const pct = (n?: number) => (typeof n === "number" && Number.isFinite(n) ? n.toFixed(3) : "n/a");
@@ -204,8 +208,10 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   // FIX (audit round-13: the fallback is VALIDATED too) — keptArr[0]?.law skipped the
   // name/statement guard, so a malformed entry rendered `LAW: undefined`. Every pick,
   // including the fallback, clears the same bar — or there is no card.
+  // round-20 M: the trim bar matches lawCard (a whitespace-only law rendered a blank subject)
   const validLaw = (k: unknown): k is JudgedLaw =>
-    !!k && typeof (k as JudgedLaw).law?.name === "string" && typeof (k as JudgedLaw).law?.statement === "string";
+    !!k && typeof (k as JudgedLaw).law?.name === "string" && (k as JudgedLaw).law.name.trim().length > 0
+    && typeof (k as JudgedLaw).law?.statement === "string" && (k as JudgedLaw).law.statement.trim().length > 0;
   const top = finiteTop.find(validLaw);
   const picked = top ?? scored.find(validLaw) ?? keptArr.find(validLaw);
   const law = picked?.law;
@@ -222,7 +228,11 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
 
   // FIX (audit round-15: the vector is bounded too) — a hostile caller's huge vector made an
   // unbounded row. Cap to 8 entries and cap each key.
-  const vecStr = Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ") || "(empty)";
+  // round-20 M: a hostile vector must not materialize (Object.entries copies ALL of it first)
+  const vecEntries: Array<[string, unknown]> = [];
+  let vcount = 0;
+  for (const k in vector) { if (vcount++ >= 8) break; vecEntries.push([k, (vector as Record<string, unknown>)[k]]); }
+  const vecStr = vecEntries.map(([k, n]) => `${cap(k, 16)}=${pct(typeof n === "number" ? n : undefined)}`).join("  ") || "(empty)";
   // FIX (audit: strip file:line:col in one pass) — `src/foo.ts:10:5` must become a clean path,
   // not `src/foo.ts:10`. Windows drive paths (C:\...) survive.
   // FIX (audit round-12: anchorFile normalized) — an empty-string targetFile survived `??`
@@ -235,8 +245,8 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
     // skipped the strip, so `src/foo.ts:10:5` rendered with line:col. One strip for both.
     const strip = (v: unknown): string => {
       if (typeof v !== "string") return "";
-      const m = /^(.*?)(?::\d+(?::\d+)?)?$/.exec(v.trim());
-      return m ? m[1] : v.trim();
+      // round-20 L: the regex always matches (the suffix is optional) — the else was dead
+      return /^(.*?)(?::\d+(?::\d+)?)?$/.exec(v.trim())![1];
     };
     const t = strip(targetFile);
     if (t) return t;

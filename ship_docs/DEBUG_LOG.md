@@ -139,3 +139,17 @@ LESSON: two compounding bugs — a scheduled exit AND a forbidden top-level retu
   (`{"id":2,"result":{"kind":"full","items":[]}}`, no -32601); the dashboard file resolves 564 laws.
 - **THE LESSON:** an independent agent's live probes found what 19 audit rounds missed — the audits
   read the code; the probes drove the RUNTIME against a different tree.
+
+## EN-16 — the r19 highs + the scope-gate self-inflicted cuts (2026-10-01)
+- **THE FINDING:** the r19 audit's 5 blocking highs; F-5's dead local; F-4's filter trap; and — from
+  my own probe — the scope gate's two loose cuts.
+- **THE ROOT CAUSE:** each is a "the name is the claim; the body is the evidence" class: `head4`
+  named a cheap probe but blocked; `cap` named a guard but could throw; the scope test named a
+  segment check but tested a child; F-5 named a repair but built a dead local.
+- **THE FIX:** H1 absolute+realpath; H2 `inFlight` Set + `finally`; H3 `O_NONBLOCK`; H4 guarded
+  conversion; H5 `attributed = picked === top`; F-5 the card unshifted to the published list;
+  F-4 `bun test ./tests/`; the scope gate on basename + `isFile()` below $HOME.
+- **THE VERIFICATION:** battery 52/0/171; derailment 6/6 (hermetic); scope 7/7; the F-5 probe
+  (CARD_COUNT 5 with the `plutus/stale` degraded card first).
+- **THE LESSON:** the dead-local and the name-vs-body classes survive green batteries — probe the
+  OBSERVABLE effect (a card count, a test count), never the code's shape.

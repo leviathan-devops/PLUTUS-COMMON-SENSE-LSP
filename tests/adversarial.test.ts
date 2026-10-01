@@ -215,13 +215,20 @@ test("A22_nonarray_kept_is_silence (round-12 entry guards)", async () => {
   expect(fileCards({} as any, 0, null, [], true).length).toBe(0);
 });
 
-test("A23_short_name_law_survives_filter (round-12 TP1 class)", async () => {
-  const { loadStore, lawsForHunk, declarationsIn } = await import("../src/plutus-lsp/store.ts");
+test("A23_short_name_law_survives_filter (round-12 class, round-20 corrected)", async () => {
+  const { loadStore, lawsForHunk } = await import("../src/plutus-lsp/store.ts");
   process.env.PLUTUS_L1_PATH = L1;
   const store = loadStore(`${import.meta.dir}/../src/plutus-lsp/store.ts`);
-  // a hunk whose ONLY signal is a 3-char domain term must still yield a candidate
-  const cands = lawsForHunk(store, "x.ts", [], "const TPs = { tp1, tp2, tp3 };", 12);
-  expect(cands.length).toBeGreaterThan(0);
+  // THE ROUND-20 CORRECTION: the ORIGINAL A23 asserted that `const TPs = { tp1, tp2, tp3 }`
+  // yields a candidate — but the ONLY match was the law-name part `CONST` matching the GENERIC
+  // word `const` in the hunk. The test ENCODED THE DEFECT (a test asserting the buggy contract).
+  // The honest pair:
+  //   (a) a GENERIC word in the hunk admits NOTHING (the precision the stopword filter bought)
+  expect(lawsForHunk(store, "x.ts", [], "const TPs = { tp1, tp2, tp3 };", 12).length).toBe(0);
+  //   (b) a REAL 3-char DOMAIN term still admits its law (the short-name channel survives)
+  const zfp = lawsForHunk(store, "x.ts", [], "zfp = threshold(zfp);", 12);
+  expect(zfp.length).toBeGreaterThan(0);
+  expect(zfp.some((l) => /ZFP/i.test(l.name))).toBe(true);
 });
 
 test("A24_topK_clamped (round-12 positive int)", async () => {

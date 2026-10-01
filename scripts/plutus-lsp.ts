@@ -60,13 +60,25 @@ const receiptFlush = () => {
   catch (e) { try { process.stderr.write(`RECEIPT_WRITE_FAIL: ${(e as Error).message}\n`); } catch {} }
 };
 setInterval(receiptFlush, 500).unref?.();
-// F-9 FIX — the receipt grew unbounded. Cap it: when the file exceeds ~12MB, truncate to the
-// last ~2000 lines once (a rotation, not a wipe).
+// F-9 FIX (round-20 H1: the rotation actually SHRINKS now) — the first cut read the whole
+// 12MB file and APPENDED the tail back to it: the size grew monotonically. Now: the tail is
+// read with a BOUNDED window (the last ~256KB), then the file is TRUNCATED (writeFileSync
+// REPLACES) so the cap holds.
 const receipt = (line: string) => { receiptBuf.push(`${new Date().toISOString()} ${clean(line)}\n`); if (receiptBuf.length > 200) receiptFlush(); };
-try { if (existsSync(RECEIPT) && statSync(RECEIPT).size > 12 * 1024 * 1024) {
-  const keep = readFileSync(RECEIPT, "utf8").split("\n").slice(-2000).join("\n");
-  appendFileSync(RECEIPT, `\n--- RECEIPT ROTATED (12MB cap) ---\n${keep}\n`);
-} } catch { /* best-effort */ }
+try {
+  if (existsSync(RECEIPT) && statSync(RECEIPT).size > 12 * 1024 * 1024) {
+    const fd = openSync(RECEIPT, "r");
+    let tail = "";
+    try {
+      const size = statSync(RECEIPT).size;
+      const start = Math.max(0, size - 256 * 1024);
+      const b = Buffer.alloc(size - start);
+      const n = readSync(fd, b, 0, b.length, start);
+      tail = b.subarray(0, Math.max(0, n)).toString("utf8").split("\n").slice(-2000).join("\n");
+    } finally { closeSync(fd); }
+    writeFileSync(RECEIPT, `--- RECEIPT ROTATED (12MB cap) ---\n${tail}\n`);
+  }
+} catch { /* best-effort */ }
 setJudgeReceipt((line: string) => receipt(line));   // FIX (audit: loud library) — the judge's
 // CHAIN/PARTITION notes land in the same receipt file as the pipeline's own lines.
 
@@ -191,13 +203,21 @@ export async function pipeline(file: string, source: string, useJudge = true): P
 // and the last publishDiagnostics. Flush receipts, then await the chain (bounded), then exit.
 /** LSP range edit applied to an in-memory doc (line/char → string). */
 function applyRange(doc: string, f: { range: { start: { line: number; character: number }; end: { line: number; character: number } }; text: string }): string {
+  // FIX (round-20 H4: the offsets are VALIDATED) — the first cut clamped lines but passed the
+  // CHARACTER offsets straight to slice: a negative/NaN offset strips a suffix, NaN wipes the
+  // prefix, and a REVERSED range (start > end) overlaps head/tail — each silently corrupting
+  // the analyzed doc. Non-finite/out-of-bounds/reversed ranges are REJECTED (the doc is kept).
+  const ok = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0;
+  const { start, end } = f.range ?? {};
+  if (!start || !end || !ok(start.line) || !ok(start.character) || !ok(end.line) || !ok(end.character) || typeof f.text !== "string") return doc;
   const ls = doc.split("\n");
-  const sL = Math.max(0, Math.min(f.range.start.line, ls.length - 1));
-  const eL = Math.max(0, Math.min(f.range.end.line, ls.length - 1));
+  if (start.line > end.line || (start.line === end.line && start.character > end.character)) return doc;
+  const sL = Math.min(start.line, ls.length - 1);
+  const eL = Math.min(end.line, ls.length - 1);
   const head = ls.slice(0, sL);
   const tail = ls.slice(eL + 1);
-  const prefix = (ls[sL] ?? "").slice(0, f.range.start.character);
-  const suffix = (ls[eL] ?? "").slice(f.range.end.character);
+  const prefix = (ls[sL] ?? "").slice(0, start.character);
+  const suffix = (ls[eL] ?? "").slice(end.character);
   return [...head, prefix + f.text + suffix, ...tail].join("\n");
 }
 
@@ -213,7 +233,7 @@ const exitFlushed = (code: number): void => {
   if (!sendChainRef) { process.exit(code); return; }
   let done = false;
   const finish = () => { if (!done) { done = true; process.exit(code); } };
-  const guard = setTimeout(finish, 3000);   // > send's 5s? no: exit guard ≥ send timeout would stall; 3s bounds the drain
+  const guard = setTimeout(finish, 7000);   // round-20: >= the send timeout (5s), never truncate   // > send's 5s? no: exit guard ≥ send timeout would stall; 3s bounds the drain
   Promise.resolve(sendChainRef).catch(() => {}).then(() => { clearTimeout(guard); finish(); });
 };
 // the stdio block installs its serialized write chain here so exits can drain it
@@ -251,6 +271,7 @@ if (process.argv.includes("--stdio")) {
   // PUBLISHES; this drops the stale WORK too (skip a new analyze while one is in flight for
   // the same uri — the trailing edit re-schedules).
   const inFlight = new Set<string>();
+  const dirty = new Set<string>();   // round-20 H3: edits that arrived during an in-flight chain
   let buf = Buffer.alloc(0);
 
   // FIX (audit: send backpressure + errors) — an unchecked stdout.write can interleave frames
@@ -324,16 +345,22 @@ if (process.argv.includes("--stdio")) {
     try { rp = realpathSync(np); } catch { /* not present yet — the prefix check stands */ }
     if (SYSTEM_DENY.test(rp)) throw new Error(`PATH_REFUSED: ${rp.slice(0, 60)}`);
     if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => rp === r || rp.startsWith(r.endsWith("/") ? r : r + "/"))) throw new Error(`PATH_OUTSIDE_ROOTS: ${rp.slice(0, 60)}`);
-    return np;
+    // FIX (round-20 H2: return the CHECKED path) — the gates ran on `rp` (the realpath) but the
+    // RAW `np` was returned, so a symlink INSIDE the roots pointing outside passed the checks
+    // and the unchecked path flowed downstream. The checked path IS the returned path.
+    return rp;
   };
 
   const seq = new Map<string, number>();   // FIX (audit:133): the per-uri sequence guard
   const pending = new Map<string, ReturnType<typeof setTimeout>>();  // FIX (audit: debounce) — one in-flight analyze per uri
   const analyze = async (uri: string) => {
-    // FIX (r19 H2) — single-flight: skip while another chain is running for this uri (the
-    // trailing edit re-schedules; the older chain is stale work by definition).
-    if (inFlight.has(uri)) { receipt(`SKIP_INFLIGHT ${uri}`); return; }
+    // FIX (r19 H2) — single-flight: skip while another chain is running for this uri.
+    // FIX (round-20 H3: the trailing edit RE-RUNS) — the first cut dropped the edit entirely:
+    // an edit debounced during a ~6s chain never published until the NEXT edit arrived. A
+    // dirty flag re-schedules once the in-flight chain completes.
+    if (inFlight.has(uri)) { dirty.add(uri); receipt(`SKIP_INFLIGHT ${uri} (dirty → rerun)`); return; }
     inFlight.add(uri);
+    dirty.delete(uri);
     try {
     // FIX (audit round-12: fileOf INSIDE the try) — the old call sat OUTSIDE, so a
     // NON_FILE_SCHEME/MALFORMED/BAD_ENCODING throw escaped the keep-last-good handler and
@@ -374,7 +401,11 @@ if (process.argv.includes("--stdio")) {
       // throw) sends NOTHING: the client keeps its last-good state. Same as the double-fault path.
       log(`ANALYZE_FAIL ${file}: ${(e as Error).message} — keeping last-good diagnostics`);
     }
-    } finally { inFlight.delete(uri); }
+    } finally {
+      inFlight.delete(uri);
+      // round-20 H3: a trailing edit re-runs now (never silently dropped)
+      if (dirty.has(uri)) { dirty.delete(uri); scheduleAnalyze(uri); }
+    }
   };
   // FIX (audit:218): coalesce rapid edits — schedule, don't fire: a new didChange for the same
   // uri cancels the pending analyze so overlapping judge chains never pile up.
@@ -530,13 +561,17 @@ if (process.argv.includes("--stdio")) {
         else {
           // the data callback is sync — the pull runs async and answers when done (same
           // debounced path as the push; the response carries the request's id).
+          // round-20 M: the pull reuses the SINGLE-FLIGHT guard (a 6s chain cannot stack)
           void (async () => {
+            if (inFlight.has(uri)) { send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: [] } }); return; }
+            inFlight.add(uri);
             try {
               const file = fileOf(uri);
               const src = docs.get(uri) ?? "";
               const r = await pipeline(file, src, true);
               send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: r.cards.map((c) => toDiagnostic(c, src, 0)) } });
             } catch (e) { send({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `InternalError: ${(e as Error).message.slice(0, 200)}` } }); }
+            finally { inFlight.delete(uri); }
           })();
         }
       } else if (msg.method === "textDocument/didSave") {

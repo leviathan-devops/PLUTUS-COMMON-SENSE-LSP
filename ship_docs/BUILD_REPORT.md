@@ -198,3 +198,14 @@ F-9 (receipt rotation) queued; F-11 (topK) documented; F-12 ($/cancelRequest) ha
 **Dist fingerprint (this update):**
 
 Dist fingerprint (this update): `6332e68445636f5f`
+
+## §12 · THE r19 HIGHS + THE HERMETIC SUITE (2026-10-01)
+
+**The built:** H1 (absolute + realpathSync confinement), H2 (single-flight per uri), H3 (`head4`
+O_NONBLOCK), H4 (guarded string conversion), H5 (the attribution flag coupled to the pick), F-5
+(the degraded card SURFACED — the dead-local repaired), F-4 (`bun test ./tests/`), and the
+derailment suite made HERMETIC (its own mini-Plutus law fixture — no host dependency).
+**The why:** the r19 gate FAIL (0c/5h) + two self-inflicted classes found by my own probes.
+**The evidence:** battery 52/0/171; derailment 6/6 PASS (hermetic); scope 7/7; bundle rebuilt.
+**The honest notes:** the r19 highs are now fixed but the gate has NOT been re-run — no ship-ready
+claim; F-9/F-11 remain documented-only.

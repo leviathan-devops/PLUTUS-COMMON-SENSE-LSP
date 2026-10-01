@@ -131,6 +131,8 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
   // (rejected instead of a fail-closed vector); a non-string state reached the model. Both
   // degrade to the named empty state, like relevancePass/buildState.
   if (typeof state !== "string") state = String(state ?? "");
+  // round-20 M: cap the state (buildState caps at 1500; a caller-built state was unbounded)
+  if (state.length > 4000) state = state.slice(0, 4000);
   if (!Array.isArray(nodes)) return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   // FIX (audit: empty-nodes first) — a vacuous input must not cost a network round-trip,
   // and a JUDGE_NO_NODES must never be masked as JEVK5_DOWN.
@@ -505,7 +507,7 @@ export function partitionByRelevance(
   const relevant: LawEntity[] = [];
   const rejected: Array<{ law: LawEntity; p: number }> = [];
   const unknown: LawEntity[] = [];
-  const bar = relevanceT();   // round-16: one bar for the whole partition (env cannot change mid-loop)
+  const cutoff = relevanceT();   // round-20: renamed from `bar` (shadowed the module helper): one bar for the whole partition (env cannot change mid-loop)
   let unmatched = 0;
   const placed = new Set<string>();   // round-15: a duplicate lawId row cannot double-place
   for (const r of rows) {
@@ -525,7 +527,7 @@ export function partitionByRelevance(
     // FIX (audit round-15: the upper bound too) — p=5 passed `p>=relevanceT()` and became
     // relevant (fail-open). Only a finite [0,1] partitions; anything else is UNREADABLE.
     if (typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1) unknown.push(law);
-    else if (p >= bar) relevant.push(law); else rejected.push({ law, p });
+    else if (p >= cutoff) relevant.push(law); else rejected.push({ law, p });
   }
   if (unmatched > 0) { try { receipt(`PARTITION unmatched=${unmatched}/${rows.length} rows (stale or hallucinated lawId)`); } catch { /* best-effort */ } }
   return { relevant, rejected, unknown };
