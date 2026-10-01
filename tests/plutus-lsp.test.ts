@@ -61,6 +61,9 @@ test("test_lsp_selftest_emits_token", async () => {
   const root = "/tmp/pcsl-selftest-probe";
   mkdirSync(`${root}/.omp/graph-intelligence/layers/semantica`, { recursive: true });
   writeFileSync(`${root}/tsconfig.json`, "{}");
+  // THE SCOPE GATE (the F-8 fix): the reflex only fires inside a Plutus-SCOPED tree. The
+  // fixture declares the scope explicitly (plutus.yaml = a scope marker).
+  writeFileSync(`${root}/plutus.yaml`, "scope: plutus\n");
   writeFileSync(
     `${root}/.omp/graph-intelligence/layers/semantica/kg.json`,
     JSON.stringify({ entities: [{ id: "law::SL-CAP", name: "SL-CAP", type: "law", statement: "SL ceiling = 36 pips HARD (D17)", tier: "IMMUTABLE", anchor: "engine3:307" }], relationships: [] }),
@@ -75,4 +78,24 @@ test("test_lsp_selftest_emits_token", async () => {
   expect(r.status).toBe(0);                                   // exit 0
   expect(r.stderr).toContain("SELFTEST OK");                  // >=1 tokenized card
   expect(r.stdout).toContain("plutus/law");                   // the token emitted
+});
+
+test("test_lsp_out_of_scope_is_silent (the F-8 scope gate)", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const root = "/tmp/pcsl-out-of-scope-probe";
+  mkdirSync(`${root}/.omp/graph-intelligence/layers/semantica`, { recursive: true });
+  writeFileSync(`${root}/tsconfig.json`, "{}");        // a GENERIC marker only — no Plutus scope
+  writeFileSync(
+    `${root}/.omp/graph-intelligence/layers/semantica/kg.json`,
+    JSON.stringify({ entities: [{ id: "law::SL-CAP", name: "SL-CAP", type: "law", statement: "SL ceiling = 36 pips HARD (D17)", tier: "IMMUTABLE", anchor: "engine3:307" }], relationships: [] }),
+  );
+  writeFileSync(`${root}/probe.ts`, "export const SL_CEILING_PIPS = 36;\n");
+  const r = spawnSync("bun", [`${import.meta.dir}/../scripts/plutus-lsp.ts`, "--selftest", `${root}/probe.ts`, "--no-judge"], {
+    env: { ...process.env, PLUTUS_L1_PATH: `${root}/.omp/graph-intelligence/layers/semantica/kg.json` },
+    encoding: "utf8",
+    timeout: 60000,
+  });
+  // OUT OF SCOPE -> ZERO cards -> the selftest's no-token signal (exit 1)
+  expect(r.stderr).toContain("NO TOKENS");
+  expect(r.stdout).not.toContain("plutus/law");
 });

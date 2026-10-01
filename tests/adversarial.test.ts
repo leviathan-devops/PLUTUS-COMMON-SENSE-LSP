@@ -71,9 +71,9 @@ test("A7_the_sibling_servers_survive (no eviction)", () => {
   expect(keys).toContain("plutus-lsp");
 });
 
-test("A8_the_token_set_is_exactly_7_and_unique", () => {
-  expect(PLUTUS_LSP_TOKENS.length).toBe(7);
-  expect(new Set(PLUTUS_LSP_TOKENS).size).toBe(7);
+test("A8_the_token_set_is_exactly_6_and_unique (F-10: the dead tier token RETIRED)", () => {
+  expect(PLUTUS_LSP_TOKENS.length).toBe(6);
+  expect(new Set(PLUTUS_LSP_TOKENS).size).toBe(6);
   for (const t of PLUTUS_LSP_TOKENS) expect(t.startsWith("plutus/")).toBe(true);
 });
 
@@ -337,4 +337,33 @@ test("A36_l2_probe_gated (M2 misfire fix)", async () => {
   const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
   // the L2 probe must be gated on the socket existing (no more 197 dead rows)
   expect(server).toContain("L2 socket absent");
+});
+
+test("A37_scope_gate_is_segment_based (the F-8 + scope-ask fix)", async () => {
+  const { isPlutusScoped } = await import("../src/plutus-lsp/store.ts");
+  // IN: a path segment literally PLUTUS
+  expect(isPlutusScoped("/x/PLUTUS/LIVE/dashboard/f.ts")).toBe(true);
+  // OUT: a dir merely NAMED with the prefix must NOT match, nor a sibling repo
+  expect(isPlutusScoped("/x/PLUTUS-COMMON-SENSE-LSP/scripts/f.ts")).toBe(false);
+  expect(isPlutusScoped("/x/Graph_Intelligence/f.ts")).toBe(false);
+  expect(isPlutusScoped("/tmp/foreign/f.ts")).toBe(false);
+  // the FIRST-CUT defect: a dir MERELY HAVING a PLUTUS child must not scope its siblings
+  expect(isPlutusScoped("/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/Graph_Intelligence/x.ts")).toBe(false);
+});
+
+test("A38_law_bearing_resolution (the F-1 CRITICAL fix)", async () => {
+  const fs = await import("node:fs");
+  const store = fs.readFileSync(`${import.meta.dir}/../src/plutus-lsp/store.ts`, "utf8");
+  // the resolver must climb to a LAW-BEARING graph, never serve a lawless symbol/file kg.json
+  expect(store).toContain("function lawCount");
+  expect(store).toContain("lawCount(local) > 0");
+  expect(store).toContain("lawCount(cand) > 0");
+});
+
+test("A39_pull_diagnostic_implemented (the F-2 capability-lie fix)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  // the advertised diagnosticProvider now HAS a handler
+  expect(server).toContain('msg.method === "textDocument/diagnostic"');
+  expect(server).toContain("kind: \"full\"");
 });

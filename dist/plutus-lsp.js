@@ -2,13 +2,13 @@
 // @bun
 
 // scripts/plutus-lsp.ts
-import { readFileSync, appendFileSync, mkdirSync, existsSync as existsSync2 } from "fs";
+import { readFileSync as readFileSync2, appendFileSync, mkdirSync, existsSync as existsSync2, statSync as statSync2 } from "fs";
 import { dirname as dirname2, resolve as resolve2 } from "path";
 import { fileURLToPath } from "url";
 
 // src/plutus-lsp/store.ts
-import { existsSync, statSync, openSync, fstatSync, readSync, closeSync, constants as FS } from "fs";
-import { join, dirname, resolve } from "path";
+import { existsSync, statSync, openSync, fstatSync, readSync, closeSync, readFileSync, constants as FS } from "fs";
+import { join, dirname, resolve, basename } from "path";
 import { connect } from "net";
 import { homedir } from "os";
 var ROOT_MARKERS = Object.freeze([".arsumbris", ".omp/graph-intelligence", "MASTER_CONTEXT", "tsconfig.json"]);
@@ -20,6 +20,34 @@ var TIERS = ["IMMUTABLE", "EVOLVING", "SUPERSEDED"];
 function validTier(v) {
   const t = String(v ?? "").trim().toUpperCase();
   return TIERS.includes(t) ? t : "SUPERSEDED";
+}
+var HOME = homedir();
+var PLUTUS_SCOPE_FILES = Object.freeze(["plutus.yaml", ".plutus"]);
+function isPlutusScoped(startFile) {
+  let dir = resolve(startFile);
+  try {
+    if (!statSync(dir).isDirectory())
+      dir = dirname(dir);
+  } catch {
+    dir = dirname(dir);
+  }
+  for (let i = 0;i < 16; i++) {
+    if (basename(dir) === "PLUTUS")
+      return true;
+    if (dir !== HOME && !HOME.startsWith(dir + "/")) {
+      for (const m of PLUTUS_SCOPE_FILES) {
+        try {
+          if (statSync(join(dir, m)).isFile())
+            return true;
+        } catch {}
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir)
+      break;
+    dir = parent;
+  }
+  return false;
 }
 function resolveRoot(startFile) {
   let dir = resolve(startFile);
@@ -55,6 +83,15 @@ var KNOWN_L1_PATHS = Object.freeze([
   "JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json"
 ]);
 var L1_RESOLVED = new Map;
+function lawCount(p) {
+  try {
+    const d = JSON.parse(readFileSync(p, "utf8"));
+    const ents = Array.isArray(d.entities) ? d.entities : [];
+    return ents.filter((e) => String(e?.type ?? "") === "law").length;
+  } catch {
+    return -1;
+  }
+}
 function head4(p) {
   try {
     const fd = openSync(p, "r");
@@ -74,15 +111,17 @@ function l1PathFor(root) {
   if (env)
     return env;
   const local = join(root, ".omp", "graph-intelligence", "layers", "semantica", "kg.json");
-  try {
-    const st = statSync(local);
-    if (st.isFile()) {
-      L1_RESOLVED.set(root, { path: local, mtimeMs: st.mtimeMs, size: st.size, head: head4(local) });
-      return local;
-    }
-  } catch {}
+  const remember = (path) => {
+    try {
+      const st = statSync(path);
+      L1_RESOLVED.set(root, { path, mtimeMs: st.mtimeMs, size: st.size, head: head4(path) });
+    } catch {}
+    return path;
+  };
+  if (lawCount(local) > 0)
+    return remember(local);
   const hit = L1_RESOLVED.get(root);
-  if (hit) {
+  if (hit && lawCount(hit.path) > 0) {
     try {
       const st = statSync(hit.path);
       if (st.mtimeMs === hit.mtimeMs && st.size === hit.size && head4(hit.path) === hit.head)
@@ -90,22 +129,27 @@ function l1PathFor(root) {
     } catch {}
     L1_RESOLVED.delete(root);
   }
-  try {
-    if (statSync(local).isDirectory())
-      throw new Error(`${PLUTUS_NO_STORE}: ${local} is a directory, not kg.json`);
-  } catch (e) {
-    if (e.message.startsWith(PLUTUS_NO_STORE))
-      throw e;
+  let dir = root;
+  for (let i = 0;i < 12; i++) {
+    const parent = dirname(dir);
+    if (parent === dir)
+      break;
+    dir = parent;
+    const cand = join(dir, ".omp", "graph-intelligence", "layers", "semantica", "kg.json");
+    if (lawCount(cand) > 0)
+      return remember(cand);
+  }
+  for (const rel of KNOWN_L1_PATHS) {
+    const known = resolve(homedir(), rel);
+    if (lawCount(known) > 0)
+      return remember(known);
   }
   if (process.env.PLUTUS_ALLOW_KNOWN_PATHS === "1") {
     for (const rel of KNOWN_L1_PATHS) {
       const known = resolve(homedir(), rel);
       try {
-        const st = statSync(known);
-        if (st.isFile()) {
-          L1_RESOLVED.set(root, { path: known, mtimeMs: st.mtimeMs, size: st.size, head: head4(known) });
-          return known;
-        }
+        if (statSync(known).isFile())
+          return remember(known);
       } catch {}
     }
   }
@@ -769,7 +813,6 @@ function partitionByRelevance(laws, rows) {
 var PLUTUS_LSP_TOKENS = [
   "plutus/law",
   "plutus/violation",
-  "plutus/tier",
   "plutus/callers",
   "plutus/drift",
   "plutus/suspect",
@@ -996,6 +1039,17 @@ var receipt2 = (line) => {
   if (receiptBuf.length > 200)
     receiptFlush();
 };
+try {
+  if (existsSync2(RECEIPT) && statSync2(RECEIPT).size > 12 * 1024 * 1024) {
+    const keep = readFileSync2(RECEIPT, "utf8").split(`
+`).slice(-2000).join(`
+`);
+    appendFileSync(RECEIPT, `
+--- RECEIPT ROTATED (12MB cap) ---
+${keep}
+`);
+  }
+} catch {}
 setReceipt((line) => receipt2(line));
 var LOG = process.env.PLUTUS_LSP_LOG ?? `${FORENSIC}/lsp-stderr.log`;
 var clean = (m) => m.replace(/[\r\n]+/g, " ");
@@ -1011,6 +1065,10 @@ var log = (m) => {
   }
 };
 async function pipeline(file, source, useJudge = true) {
+  if (!isPlutusScoped(file)) {
+    receipt2(`OUT-OF-SCOPE file=${file}`);
+    return { tokens: [], cards: [], refused: null, vector: {} };
+  }
   let store;
   try {
     store = loadStore(file);
@@ -1060,6 +1118,11 @@ async function pipeline(file, source, useJudge = true) {
       all = candidates.slice(0, 3);
       judgedLaws = all.map((law) => ({ law, p: -1 }));
       receipt2(`RELEVANCE degraded=${rel.reason}`);
+      try {
+        const sc = staleCard(`JUDGE_DEGRADED: ${rel.reason} \u2014 relevance kernel bypassed (lexical top-3)`);
+        if (all.length > 0)
+          judgedLaws = all.map((law) => ({ law, p: -1 }));
+      } catch {}
     }
   } else if (candidates.length > 0) {
     all = candidates.slice(0, 3);
@@ -1074,6 +1137,18 @@ async function pipeline(file, source, useJudge = true) {
   const tokens = [...new Set(cards.map((c) => c.source))];
   receipt2(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
   return { tokens, cards, refused: null, vector, relevance };
+}
+function applyRange(doc, f) {
+  const ls = doc.split(`
+`);
+  const sL = Math.max(0, Math.min(f.range.start.line, ls.length - 1));
+  const eL = Math.max(0, Math.min(f.range.end.line, ls.length - 1));
+  const head = ls.slice(0, sL);
+  const tail = ls.slice(eL + 1);
+  const prefix = (ls[sL] ?? "").slice(0, f.range.start.character);
+  const suffix = (ls[eL] ?? "").slice(f.range.end.character);
+  return [...head, prefix + f.text + suffix, ...tail].join(`
+`);
 }
 var exitFlushed = (code) => {
   try {
@@ -1107,7 +1182,7 @@ if (process.argv.includes("--selftest")) {
     }
     let src = "";
     try {
-      src = readFileSync(file, "utf8");
+      src = readFileSync2(file, "utf8");
     } catch (e) {
       console.error(`ENOENT: ${file} \u2014 ${e.message}`);
       return exitFlushed(2);
@@ -1350,9 +1425,9 @@ ${j}`);
           }
         }
         const full = cc.filter((f) => f && typeof f === "object" && f.range === undefined);
-        const partial = cc.length - full.length;
-        if (partial > 0)
-          log(`INCREMENTAL_REJECTED ${uri}: ${partial} ranged fragment(s) \u2014 last-good kept`);
+        const ranged = cc.filter((f) => f && typeof f === "object" && f.range !== undefined);
+        if (ranged.length > 0)
+          log(`INCREMENTAL_APPLIED ${uri}: ${ranged.length} ranged fragment(s)`);
         const lastText = full[full.length - 1]?.text;
         const openText = p?.textDocument?.text;
         const good = (x) => typeof x === "string";
@@ -1361,14 +1436,48 @@ ${j}`);
         if (full.length === 0 && openText !== undefined && !good(openText))
           log(`PARAMS_REJECTED ${uri}: open text is ${typeof openText}`);
         let text;
-        if (full.length > 0)
-          text = good(lastText) ? lastText : docs.get(uri) ?? "";
-        else
-          text = good(openText) ? openText : docs.get(uri) ?? "";
+        if (full.length > 0 && good(lastText))
+          text = lastText;
+        else if (good(openText))
+          text = openText;
+        else {
+          text = docs.get(uri) ?? "";
+          for (const f of ranged)
+            text = applyRange(text, f);
+        }
         if (uri) {
           docs.set(uri, text);
           scheduleAnalyze(uri);
         }
+      } else if (msg.method === "textDocument/diagnostic") {
+        const p = msg.params;
+        const rawUri = p?.textDocument?.uri;
+        const uri = typeof rawUri === "string" ? rawUri : "";
+        if (!uri) {
+          send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "InvalidParams: textDocument.uri required" } });
+        } else {
+          (async () => {
+            try {
+              const file = fileOf(uri);
+              const src = docs.get(uri) ?? "";
+              const r = await pipeline(file, src, true);
+              send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: r.cards.map((c) => toDiagnostic(c, src, 0)) } });
+            } catch (e) {
+              send({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `InternalError: ${e.message.slice(0, 200)}` } });
+            }
+          })();
+        }
+      } else if (msg.method === "textDocument/didSave") {
+        const p = msg.params;
+        const rawUri = p?.textDocument?.uri;
+        const uri = typeof rawUri === "string" ? rawUri : "";
+        if (uri)
+          scheduleAnalyze(uri);
+      } else if (msg.method === "workspace/didChangeConfiguration") {
+        receipt2("CONFIG_IGNORED workspace/didChangeConfiguration (env-only config)");
+      } else if (msg.method === "$/cancelRequest") {
+        const id = msg.params?.id;
+        receipt2(`CANCEL_REQUEST id=${String(id)} (best-effort; analyzes are short)`);
       } else if (msg.method === "textDocument/didClose") {
         const p = msg.params;
         const rawUri2 = p?.textDocument?.uri;

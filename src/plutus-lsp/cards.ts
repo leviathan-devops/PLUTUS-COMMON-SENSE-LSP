@@ -21,10 +21,12 @@
 // emits it — the tier now rides inside each law card's TIER row. A consumer filtering on
 // `plutus/tier` alone will wait forever; filter on `plutus/law` instead. Kept, not removed,
 // so existing filters do not break.
+// F-10 FIX (the dead token RETIRED) — `plutus/tier` was declared and emitted by NO card
+// (a consumer filtering on it waited forever). The tier rides each LAW card's TIER row, so the
+// bare token is retired rather than fabricated. The set is the exact emit surface: 6 tokens.
 export const PLUTUS_LSP_TOKENS = [
   "plutus/law",       // one governing law, with the judge's relevance probability
   "plutus/violation", // the judged breach of a governing law
-  "plutus/tier",      // the immutability notice (folded into law cards now)
   "plutus/callers",   // the import-edge blast radius
   "plutus/drift",     // the judged conflict with a prior decision
   "plutus/suspect",   // the marginal / inconclusive

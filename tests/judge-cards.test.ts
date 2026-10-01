@@ -33,8 +33,8 @@ test("test_judge_down_is_named", async () => {
 });
 
 test("test_cards_one_per_governing_law", () => {
-  expect(PLUTUS_LSP_TOKENS.length).toBe(7);
-  expect(new Set(PLUTUS_LSP_TOKENS).size).toBe(7);    // no duplicates
+  expect(PLUTUS_LSP_TOKENS.length).toBe(6);   // F-10: the dead tier token retired
+  expect(new Set(PLUTUS_LSP_TOKENS).size).toBe(6);    // no duplicates (F-10 retired tier)
   // ONE CARD PER LAW (the design fix) — the card names the subject
   const kept: JudgedLaw[] = [{ law: LAW, p: 0.82 }];
   const laws = lawCard(kept, 9, true);                 // 9 candidates raised, 1 kept

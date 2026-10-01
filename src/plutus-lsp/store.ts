@@ -13,8 +13,8 @@
  * The precedent: Graph_Intelligence/scripts/gi-lsp.ts (the GI reflex, 220 L).
  */
 
-import { existsSync, statSync, openSync, fstatSync, readSync, closeSync, constants as FS } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { existsSync, statSync, openSync, fstatSync, readSync, closeSync, readFileSync, constants as FS } from "node:fs";
+import { join, dirname, resolve, basename } from "node:path";
 import { connect } from "node:net";
 import { homedir } from "node:os";
 
@@ -56,6 +56,43 @@ export interface Store {
   laws: LawEntity[];
   /** the count actually read — a card asserts only what it measured */
   total: number;
+}
+
+/** THE SCOPE MARKERS — PLUTUS-SPECIFIC (the workspace-scoped-state law, generalized).
+ *  A file is IN SCOPE only when an ancestor carries one of these. The generic markers below
+ *  (tsconfig.json etc.) match EVERY node project, so they can locate a root but can NEVER
+ *  authorize the reflex — that is how the old build "blind-fired on literally everything."
+ *  The reflex runs ONLY under a Plutus-scoped tree; everything else is SILENT. */
+// FIX (F-8 + the scope ask, take 3 — the decisive test). Two earlier cuts were TOO LOOSE:
+//   (1) `existsSync(join(dir,"PLUTUS"))` fired for any ancestor merely HAVING a PLUTUS subdir
+//       (Shared_Workspace/PLUTUS exists → every repo under Shared_Workspace matched);
+//   (2) `/home/leviathan/.plutus/` (a stale DIRECTORY from a prior session) scoped the ENTIRE
+//       home dir via the marker-file branch.
+// The decisive rule: a file is Plutus-scoped iff a path SEGMENT is literally `PLUTUS` (the
+// tree), OR an ancestor carries an explicit `plutus.yaml`/`.plutus` FILE (not dir) BELOW $HOME
+// (a marker at/above $HOME scopes the whole home — meaningless as a scope signal).
+const HOME = homedir();
+export const PLUTUS_SCOPE_FILES: readonly string[] = Object.freeze(["plutus.yaml", ".plutus"]);
+
+/** Is the file IN a Plutus-scoped tree? The reflex runs ONLY here — everything else is
+ *  SILENT (no card, no receipt noise). The decisive test. */
+export function isPlutusScoped(startFile: string): boolean {
+  let dir = resolve(startFile);
+  try { if (!statSync(dir).isDirectory()) dir = dirname(dir); } catch { dir = dirname(dir); }
+  for (let i = 0; i < 16; i++) {
+    // (a) the segment is literally PLUTUS — the unambiguous tree marker
+    if (basename(dir) === "PLUTUS") return true;
+    // (b) an explicit scope FILE, but never at/above $HOME (bounded scope)
+    if (dir !== HOME && !HOME.startsWith(dir + "/")) {
+      for (const m of PLUTUS_SCOPE_FILES) {
+        try { if (statSync(join(dir, m)).isFile()) return true; } catch { /* not present */ }
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return false;
 }
 
 /** Resolve the project root by walking up for a root marker. Absent → PLUTUS_NO_ROOT. */
@@ -114,6 +151,17 @@ export const KNOWN_L1_PATHS: readonly string[] = Object.freeze([
 // different head bytes is re-read. (A same-size edit with an IDENTICAL 4KB head is the
 // residual — named, not hidden.)
 const L1_RESOLVED = new Map<string, { path: string; mtimeMs: number; size: number; head: string }>();
+/** F-1 FIX: the law count in a kg.json (cheap: read + count type==="law"). -1 = unreadable.
+ *  The reflex is only meaningful against a LAW-BEARING graph; a symbol/file-only graph has
+ *  zero laws and makes the pipeline a silent no-op. This is the scoping test. */
+function lawCount(p: string): number {
+  try {
+    const d = JSON.parse(readFileSync(p, "utf8")) as { entities?: unknown };
+    const ents = Array.isArray((d as { entities?: unknown[] }).entities) ? (d as { entities: unknown[] }).entities : [];
+    return ents.filter((e) => String((e as Record<string, unknown>)?.type ?? "") === "law").length;
+  } catch { return -1; }
+}
+
 /** The first-4KB fingerprint of a file (the cache's content check). Absent → "". */
 function head4(p: string): string {
   try {
@@ -131,35 +179,50 @@ export function l1PathFor(root: string): string {
   // switch it; a cached override would serve a stale corpus as canon)
   const env = process.env.PLUTUS_L1_PATH;
   if (env) return env;
-  // FIX (audit: local-first) — check the cwd's own kg.json BEFORE the cache, so a local
-  // corpus appearing after first load is never shadowed by a stale KNOWN entry.
   const local = join(root, ".omp", "graph-intelligence", "layers", "semantica", "kg.json");
-  try {
-    const st = statSync(local);
-    if (st.isFile()) { L1_RESOLVED.set(root, { path: local, mtimeMs: st.mtimeMs, size: st.size, head: head4(local) }); return local; }
-  } catch { /* fall through */ }
+  const remember = (path: string): string => {
+    try { const st = statSync(path); L1_RESOLVED.set(root, { path, mtimeMs: st.mtimeMs, size: st.size, head: head4(path) }); } catch { /* best effort */ }
+    return path;
+  };
+  // FIX (F-1 CRITICAL, the lawless-root silence) — the OLD code returned the nearest kg.json
+  // whatever it contained. A `PLUTUS/LIVE/dashboard` file resolved a graph of 1,785 SYMBOL/FILE
+  // entities and ZERO laws → `lawsForHunk` returned [] → the pipeline was a silent no-op while
+  // the LAW-BEARING graphs (MASTER_CONTEXT 559 laws, the agent tree 564) sat one level up.
+  // THE FIX: the reflex only runs against a LAW-BEARING graph. Order:
+  //   1. the local kg.json IF it carries laws
+  //   2. the cached path IF still valid AND law-bearing
+  //   3. the NEAREST ANCESTOR whose kg.json carries laws (the climb)
+  //   4. the KNOWN law-bearing paths (homedir-relative) — ON BY DEFAULT for the law case
+  //       (the opt-in gate stays for the plain-existence fallback below)
+  //   5. the local path (lawless → loadStore yields 0 laws → the pipeline stays SILENT)
+  if (lawCount(local) > 0) return remember(local);
   const hit = L1_RESOLVED.get(root);
-  if (hit) {
+  if (hit && lawCount(hit.path) > 0) {
     try {
       const st = statSync(hit.path);
       if (st.mtimeMs === hit.mtimeMs && st.size === hit.size && head4(hit.path) === hit.head) return hit.path;
     } catch { /* fall through and re-resolve */ }
     L1_RESOLVED.delete(root);
   }
-  try { if (statSync(local).isDirectory()) throw new Error(`${PLUTUS_NO_STORE}: ${local} is a directory, not kg.json`); } catch (e) { if ((e as Error).message.startsWith(PLUTUS_NO_STORE)) throw e; }
+  let dir = root;
+  for (let i = 0; i < 12; i++) {
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+    const cand = join(dir, ".omp", "graph-intelligence", "layers", "semantica", "kg.json");
+    if (lawCount(cand) > 0) return remember(cand);
+  }
+  for (const rel of KNOWN_L1_PATHS) {
+    const known = resolve(homedir(), rel);
+    if (lawCount(known) > 0) return remember(known);
+  }
   if (process.env.PLUTUS_ALLOW_KNOWN_PATHS === "1") {
-    // FIX (audit: knownAbs was UNDEFINED — ReferenceError when enabled). The entries are
-    // already absolute paths; resolve() normalizes without inventing a helper.
     for (const rel of KNOWN_L1_PATHS) {
-      // homedir-joined at CALL time: portable, no username in the module.
       const known = resolve(homedir(), rel);
-      try {
-        const st = statSync(known);
-        if (st.isFile()) { L1_RESOLVED.set(root, { path: known, mtimeMs: st.mtimeMs, size: st.size, head: head4(known) }); return known; }
-      } catch { /* not present on this host */ }
+      try { if (statSync(known).isFile()) return remember(known); } catch { /* not present */ }
     }
-  }   // FIX: the canon discovery
-  return local;   // absent everywhere -> loadStore throws the NAMED PLUTUS_NO_STORE
+  }
+  return local;   // lawless/absent everywhere -> 0 laws (SILENT) or PLUTUS_NO_STORE
 }
 
 /**

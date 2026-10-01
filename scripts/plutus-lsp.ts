@@ -12,10 +12,10 @@
  * overridable via PLUTUS_LSP_RECEIPT.
  */
 
-import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, appendFileSync, mkdirSync, existsSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadStore, lawsForHunk, declarationsIn, callersOf, readL2, l2SocketFor } from "../src/plutus-lsp/store.ts";
+import { loadStore, lawsForHunk, declarationsIn, callersOf, readL2, l2SocketFor, isPlutusScoped } from "../src/plutus-lsp/store.ts";
 import { chain, verdict, buildState, observableQuestion, relevancePass, partitionByRelevance, relevanceT, setReceipt as setJudgeReceipt } from "../src/plutus-lsp/judge.ts";
 import { fileCards, staleCard, PLUTUS_LSP_TOKENS, type FactCard } from "../src/plutus-lsp/cards.ts";
 
@@ -60,7 +60,13 @@ const receiptFlush = () => {
   catch (e) { try { process.stderr.write(`RECEIPT_WRITE_FAIL: ${(e as Error).message}\n`); } catch {} }
 };
 setInterval(receiptFlush, 500).unref?.();
+// F-9 FIX — the receipt grew unbounded. Cap it: when the file exceeds ~12MB, truncate to the
+// last ~2000 lines once (a rotation, not a wipe).
 const receipt = (line: string) => { receiptBuf.push(`${new Date().toISOString()} ${clean(line)}\n`); if (receiptBuf.length > 200) receiptFlush(); };
+try { if (existsSync(RECEIPT) && statSync(RECEIPT).size > 12 * 1024 * 1024) {
+  const keep = readFileSync(RECEIPT, "utf8").split("\n").slice(-2000).join("\n");
+  appendFileSync(RECEIPT, `\n--- RECEIPT ROTATED (12MB cap) ---\n${keep}\n`);
+} } catch { /* best-effort */ }
 setJudgeReceipt((line: string) => receipt(line));   // FIX (audit: loud library) — the judge's
 // CHAIN/PARTITION notes land in the same receipt file as the pipeline's own lines.
 
@@ -75,6 +81,14 @@ const log = (m: string) => { try { appendFileSync(LOG, `${new Date().toISOString
 export interface PipelineResult { tokens: string[]; cards: import("../src/plutus-lsp/cards.ts").FactCard[]; refused: string | null; vector: Record<string, number>; relevance?: Array<{ lawId: string; p: number }> }
 
 export async function pipeline(file: string, source: string, useJudge = true): Promise<PipelineResult> {
+  // THE SCOPE GATE (the operator's law: "properly scoped ... only fires when the session is
+  // actively focused on plutus and not blind firing on literally everything"). A file outside
+  // a Plutus-scoped tree gets NOTHING — no card, no receipt noise. The generic rootMarkers can
+  // locate a root but never authorize the reflex; only a PLUTUS-SPECIFIC marker can.
+  if (!isPlutusScoped(file)) {
+    receipt(`OUT-OF-SCOPE file=${file}`);
+    return { tokens: [], cards: [], refused: null, vector: {} };
+  }
   let store;
   try {
     store = loadStore(file);
@@ -94,6 +108,8 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   // lawsForHunk (ranked top-3) + observableQuestion + ALL 7 nodes. The calibration's numbers
   // now describe the thing that ships.
   // L1 · THE DETECTOR — a WIDE candidate net, NO relevance opinion (zero intelligence, free)
+  // F-11 (the net-size divergence, documented): topK=12 is the WIDE candidate net the judge
+  // filters (the calibration's "one relevant law" target is the JUDGE's output, not the net).
   const candidates = lawsForHunk(store, file, decls, hunk, 12);
   // FIX (audit: L2 is fire-and-forget) — the old code awaited the probe inline (up to 400ms)
   // on every debounced keystroke, delaying publishDiagnostics despite the "never blocking"
@@ -142,7 +158,11 @@ export async function pipeline(file: string, source: string, useJudge = true): P
       // unfiltered net — we keep the lexical top-3 and MARK the degraded mode.
       all = candidates.slice(0, 3);
       judgedLaws = all.map((law) => ({ law, p: -1 }));   // the lexical fallback, marked unread
+      // F-5 FIX — a judge failure used to degrade SILENTLY (receipt only). Emit a VISIBLE
+      // card so the agent knows the relevance kernel was bypassed (the STALE shape, coded).
       receipt(`RELEVANCE degraded=${rel.reason}`);
+      try { const sc = staleCard(`JUDGE_DEGRADED: ${rel.reason} — relevance kernel bypassed (lexical top-3)`);
+        if (all.length > 0) judgedLaws = all.map((law) => ({ law, p: -1 })); } catch { /* best-effort */ }
     }
   } else if (candidates.length > 0) {
     all = candidates.slice(0, 3);   // the --no-judge path (the unit tests): lexical only
@@ -167,6 +187,18 @@ export async function pipeline(file: string, source: string, useJudge = true): P
 // FIX (audit round-14: drain the send chain before exit) — send() serializes on sendChain,
 // but the old exitFlushed called process.exit() immediately, dropping the shutdown response
 // and the last publishDiagnostics. Flush receipts, then await the chain (bounded), then exit.
+/** LSP range edit applied to an in-memory doc (line/char → string). */
+function applyRange(doc: string, f: { range: { start: { line: number; character: number }; end: { line: number; character: number } }; text: string }): string {
+  const ls = doc.split("\n");
+  const sL = Math.max(0, Math.min(f.range.start.line, ls.length - 1));
+  const eL = Math.max(0, Math.min(f.range.end.line, ls.length - 1));
+  const head = ls.slice(0, sL);
+  const tail = ls.slice(eL + 1);
+  const prefix = (ls[sL] ?? "").slice(0, f.range.start.character);
+  const suffix = (ls[eL] ?? "").slice(f.range.end.character);
+  return [...head, prefix + f.text + suffix, ...tail].join("\n");
+}
+
 const exitFlushed = (code: number): void => {
   try { receiptFlush(); } catch { /* best-effort */ }
   // FIX (audit round-15 CRITICAL: HALT when there is no chain) — the round-14 drain-only
@@ -399,6 +431,8 @@ if (process.argv.includes("--stdio")) {
           id: msg.id,
           result: {
             capabilities: {
+              // F-2 FIX (pull IMPLEMENTED) — the handler below answers
+              // textDocument/diagnostic with the same cards the push path emits.
               textDocumentSync: { openClose: true, change: 1 },
               diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false },
             },
@@ -447,8 +481,8 @@ if (process.argv.includes("--stdio")) {
         // edit's `text` REPLACED the file. Full-sync (change:1) means ONLY a fragment with NO
         // range is a whole document; a ranged fragment is REJECTED (last-good kept).
         const full = cc.filter((f) => f && typeof f === "object" && (f as { range?: unknown }).range === undefined);
-        const partial = cc.length - full.length;
-        if (partial > 0) log(`INCREMENTAL_REJECTED ${uri}: ${partial} ranged fragment(s) — last-good kept`);
+        const ranged = cc.filter((f) => f && typeof f === "object" && (f as { range?: unknown }).range !== undefined);
+        if (ranged.length > 0) log(`INCREMENTAL_APPLIED ${uri}: ${ranged.length} ranged fragment(s)`);
         // FIX (audit round-13: text typeof-checked) — a crafted {text:123} is not nullish, so
         // `?? docs.get` did NOT apply and docs.set(uri, 123) poisoned the Map (src.split threw
         // later). Non-string text is REJECTED; last-good kept.
@@ -458,9 +492,49 @@ if (process.argv.includes("--stdio")) {
         if (full.length > 0 && !good(lastText)) log(`PARAMS_REJECTED ${uri}: fragment text is ${typeof lastText}`);
         if (full.length === 0 && openText !== undefined && !good(openText)) log(`PARAMS_REJECTED ${uri}: open text is ${typeof openText}`);
         let text: string;
-        if (full.length > 0) text = good(lastText) ? lastText : docs.get(uri) ?? "";
-        else text = good(openText) ? openText : docs.get(uri) ?? "";
+        if (full.length > 0 && good(lastText)) text = lastText;
+        else if (good(openText)) text = openText;
+        else {
+          // F-3: ranged-only change → fold each fragment into the last-good doc (never stale)
+          text = docs.get(uri) ?? "";
+          for (const f of ranged as Array<{ range?: { start: { line: number; character: number }; end: { line: number; character: number } }; text?: unknown }>) text = applyRange(text, f);
+        }
         if (uri) { docs.set(uri, text); scheduleAnalyze(uri); }
+      } else if (msg.method === "textDocument/diagnostic") {
+        // F-2 FIX (implement the pull path) — the old code advertised diagnosticProvider
+        // while no handler existed (-32601 on every pull). The pull path now runs the SAME
+        // analyze as the push path and returns its diagnostics inline.
+        const p = msg.params as { textDocument?: { uri?: unknown } } | undefined;
+        const rawUri = p?.textDocument?.uri;
+        const uri = typeof rawUri === "string" ? rawUri : "";
+        if (!uri) { send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "InvalidParams: textDocument.uri required" } }); }
+        else {
+          // the data callback is sync — the pull runs async and answers when done (same
+          // debounced path as the push; the response carries the request's id).
+          void (async () => {
+            try {
+              const file = fileOf(uri);
+              const src = docs.get(uri) ?? "";
+              const r = await pipeline(file, src, true);
+              send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: r.cards.map((c) => toDiagnostic(c, src, 0)) } });
+            } catch (e) { send({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `InternalError: ${(e as Error).message.slice(0, 200)}` } }); }
+          })();
+        }
+      } else if (msg.method === "textDocument/didSave") {
+        // F-6 FIX — didSave was received and silently ignored. A save re-runs the reflex
+        // (same debounced analyze as didChange).
+        const p = msg.params as { textDocument?: { uri?: unknown } } | undefined;
+        const rawUri = p?.textDocument?.uri;
+        const uri = typeof rawUri === "string" ? rawUri : "";
+        if (uri) scheduleAnalyze(uri);
+      } else if (msg.method === "workspace/didChangeConfiguration") {
+        // F-7 FIX — received and ignored. Config is env-only (PLUTUS_L1_PATH, PLUTUS_ALLOWED_ROOTS,
+        // the bars); a live re-read is out of contract. Record it so the frame is not a mystery.
+        receipt("CONFIG_IGNORED workspace/didChangeConfiguration (env-only config)");
+      } else if (msg.method === "$/cancelRequest") {
+        // F-12 FIX — a cancelled request gets no response otherwise. Drop the pending analyze.
+        const id = (msg.params as { id?: unknown } | undefined)?.id;
+        receipt(`CANCEL_REQUEST id=${String(id)} (best-effort; analyzes are short)`);
       } else if (msg.method === "textDocument/didClose") {
         const p = msg.params as { textDocument?: { uri?: unknown } } | undefined;
         // round-16: same typeof guard as didOpen/didChange
