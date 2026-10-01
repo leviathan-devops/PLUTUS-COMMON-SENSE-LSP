@@ -72,10 +72,31 @@ export interface Store {
 // tree), OR an ancestor carries an explicit `plutus.yaml`/`.plutus` FILE (not dir) BELOW $HOME
 // (a marker at/above $HOME scopes the whole home — meaningless as a scope signal).
 const HOME = homedir();
-export const PLUTUS_SCOPE_FILES: readonly string[] = Object.freeze(["plutus.yaml", ".plutus"]);
 
-/** Is the file IN a Plutus-scoped tree? The reflex runs ONLY here — everything else is
- *  SILENT (no card, no receipt noise). The decisive test. */
+// ══════════════════════════════════════════════════════════════════════════════════════════
+//  THE SCOPE GATE — CONFIGURABLE (the reuse seam: a fresh project sets these and gets scoping)
+// ══════════════════════════════════════════════════════════════════════════════════════════
+//  THE LAW: the reflex runs ONLY inside a scoped tree; everything else is SILENT (no card, no
+//  receipt noise). The generic rootMarkers (tsconfig.json) can LOCATE a root but can NEVER
+//  AUTHORIZE the reflex — that is exactly how the old build "blind-fired on literally
+//  everything". A fresh project RE-HOSTING this kernel sets ONE env var:
+//
+//     PLUTUS_LSP_SCOPE="MYPROJECT"        # the path SEGMENT(s) that mean "this is my tree"
+//     PLUTUS_LSP_SCOPE_FILES="myproj.yaml,.myproj"   # optional explicit scope FILES
+//
+//  Defaults keep PLUTUS working out of the box. The segment test is BASENAME (never
+//  child-existence — a dir merely HAVING a `<PROJECT>/` child must not scope its siblings);
+//  the file test is `isFile()` BELOW $HOME (a marker at/above $HOME scopes the whole home).
+const SCOPE_SEGMENTS: readonly string[] = Object.freeze(
+  (process.env.PLUTUS_LSP_SCOPE ?? "PLUTUS").split(",").map((x) => x.trim()).filter(Boolean),
+);
+export const PLUTUS_SCOPE_FILES: readonly string[] = Object.freeze(
+  (process.env.PLUTUS_LSP_SCOPE_FILES ?? "plutus.yaml,.plutus").split(",").map((x) => x.trim()).filter(Boolean),
+);
+
+/** Is the file IN a scoped tree? The reflex runs ONLY here — everything else is SILENT.
+ *  The decisive test: a path SEGMENT equals a SCOPE_SEGMENT, OR an ancestor carries an
+ *  explicit scope FILE below $HOME. Fully configurable (see PLUTUS_LSP_SCOPE above). */
 export function isPlutusScoped(startFile: string): boolean {
   let dir = resolve(startFile);
   try { if (!statSync(dir).isDirectory()) dir = dirname(dir); } catch { dir = dirname(dir); }
@@ -83,8 +104,8 @@ export function isPlutusScoped(startFile: string): boolean {
   // escape the scope decision (the scope tests the REAL location, not the link path).
   try { dir = realpathSync(dir); } catch { /* not present — the resolved path stands */ }
   for (let i = 0; i < 16; i++) {
-    // (a) the segment is literally PLUTUS — the unambiguous tree marker
-    if (basename(dir) === "PLUTUS") return true;
+    // (a) the segment IS a scope segment — the unambiguous tree marker (basename, never child)
+    if (SCOPE_SEGMENTS.includes(basename(dir))) return true;
     // (b) an explicit scope FILE, but never at/above $HOME (bounded scope)
     if (dir !== HOME && !HOME.startsWith(dir + "/")) {
       for (const m of PLUTUS_SCOPE_FILES) {

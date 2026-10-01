@@ -22,7 +22,8 @@ function validTier(v) {
   return TIERS.includes(t) ? t : "SUPERSEDED";
 }
 var HOME = homedir();
-var PLUTUS_SCOPE_FILES = Object.freeze(["plutus.yaml", ".plutus"]);
+var SCOPE_SEGMENTS = Object.freeze((process.env.PLUTUS_LSP_SCOPE ?? "PLUTUS").split(",").map((x) => x.trim()).filter(Boolean));
+var PLUTUS_SCOPE_FILES = Object.freeze((process.env.PLUTUS_LSP_SCOPE_FILES ?? "plutus.yaml,.plutus").split(",").map((x) => x.trim()).filter(Boolean));
 function isPlutusScoped(startFile) {
   let dir = resolve(startFile);
   try {
@@ -35,7 +36,7 @@ function isPlutusScoped(startFile) {
     dir = realpathSync(dir);
   } catch {}
   for (let i = 0;i < 16; i++) {
-    if (basename(dir) === "PLUTUS")
+    if (SCOPE_SEGMENTS.includes(basename(dir)))
       return true;
     if (dir !== HOME && !HOME.startsWith(dir + "/")) {
       for (const m of PLUTUS_SCOPE_FILES) {

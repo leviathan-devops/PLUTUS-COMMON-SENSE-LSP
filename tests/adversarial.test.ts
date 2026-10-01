@@ -442,3 +442,12 @@ test("A45_security_caps_present (the security auditor's 10)", async () => {
   expect(judge).toContain("Object.keys(j as object).slice(0, 8)");
   expect(judge).toContain("String(l.statement).slice(0, 500)");
 });
+
+test("A46_scope_configurable (the boilerplate's reuse seam)", async () => {
+  const fs = await import("node:fs");
+  const store = fs.readFileSync(`${import.meta.dir}/../src/plutus-lsp/store.ts`, "utf8");
+  // the scope is env-configurable: a fresh re-host sets PLUTUS_LSP_SCOPE / _FILES
+  expect(store).toContain("PLUTUS_LSP_SCOPE");
+  expect(store).toContain("PLUTUS_LSP_SCOPE_FILES");
+  expect(store).toContain("SCOPE_SEGMENTS.includes(basename(dir))");
+});
