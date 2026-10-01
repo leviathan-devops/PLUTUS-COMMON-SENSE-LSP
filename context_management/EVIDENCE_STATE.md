@@ -52,4 +52,6 @@ PUBLISH n=3 tokens=plutus/law,plutus/tier,plutus/suspect file=…/mirror.ts verd
 - audit GATE FAIL (0 critical, 5 high), session c8027864: 
 - battery 46 pass / 0 fail / 158 expects (bun test v1.4.2 (744846f84), re-run this turn)
 - dist fingerprint: 
-- derailment suite 6/6 (unchanged since seal): 
+- derailment suite 6/6 (unchanged since seal):
+
+Dist fingerprint (2026-10-01): `3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155`

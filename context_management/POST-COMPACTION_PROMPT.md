@@ -20,3 +20,5 @@ the single fallback policy (never clear) · fail-closed defaults · BLOCKED-is-n
 ## THE TRAPS
 The LSP binds at session construction (a restart is needed for a new server).
 The 8-item corpus is small. The judge's ceiling is the question's writeability.
+
+Dist fingerprint (2026-10-01): `3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155`
