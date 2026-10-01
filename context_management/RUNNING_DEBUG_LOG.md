@@ -43,3 +43,14 @@
 - BUG-10: send() leaked drain/error listeners per frame. FIX: callback-only resolver. LESSON: one resolver per promise.
 - BUG-11: YOU ARE EDITING named the canon file. FIX: targetFile threaded; live proof on cards.ts. LESSON: a warning naming the wrong file trains ignore.
 - THE VERIFICATION: 26/0 battery + 4 live selftests + rebuilt bundle (51f95e841cf6247f).
+
+## BUG-12 · the proxy file deleted, the unit crash-looping (found 2026-10-01)
+- THE FINDING: every :4097 consumer refused; `systemctl --user status` showed restart counter
+  ~19,428; journal: `MODULE_NOT_FOUND go-session-proxy.mjs` every 3s.
+- THE ROOT CAUSE: the file the unit's ExecStart points at was deleted from the working tree
+  (`D` in git status). `Restart=always` turned a missing file into a 19k-restart loop.
+- THE FIX: restored the 469-line Shared_Workspace copy (not the 130-line committed one — it
+  lacks the zen fingerprint: pinned UA, stable ses_ id, {bash,glob,grep,read} tool set).
+  `node --check` clean → restart → `active`, `/healthz` ok, 4097/4098/8090 OPEN.
+- THE LESSON: a crash-looping unit's FIRST diagnostic is "does the ExecStart target exist" —
+  before any theory about ports, keys, or providers.

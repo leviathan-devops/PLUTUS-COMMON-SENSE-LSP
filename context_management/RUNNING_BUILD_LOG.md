@@ -49,3 +49,15 @@
 
 ## 2026-09-30 · the ship-docs pass (6 docs)
 - BUILD_REPORT §7 · DEBUG_LOG BUG-06..11 · TESTING_LOG round-10/11 section · FAILURE_LOG F-04/F-05 · THEATRICALITY_LOG created (T-01..T-05, operator-caught 0). Committed with the batch.
+
+## 2026-10-01 · the proxy restore + the report + v0.7
+- THE PROXY: `go-session-proxy.service` crash-looping (restart counter ~19,428) — its file
+  `.mimocode/go-session-proxy.mjs` was DELETED from the working tree (`git status D`), so node
+  threw MODULE_NOT_FOUND every 3s and :4097 never bound. Restored the 469-line copy (with the
+  zen fingerprint machinery the 130-line committed copy lacks), `node --check` clean, unit
+  `active`, `/healthz` → `{"ok":true}`. 4097/4098/8090 all OPEN. The round-11 audit lane (T8)
+  is UNBLOCKED.
+- THE REPORT: `reports/PCSL_Engineering_Report_v1.md` written (545 lines, 19 boxes, 0 box
+  defects, max width 76) — first in the PCSL series. Lifecycle + 4 module diagrams + call
+  tree + file tree + 5-part runtime trace + 2 pseudocode + 2 bug boxes + numbers table.
+- THE BATTERY (re-confirmed this turn): 26 pass / 0 fail / 117 expects.
