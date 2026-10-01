@@ -147,3 +147,18 @@ one subsystem re-introduces defects; the audit count is not a convergence proof.
   loud-fail-or-clear-pass law violated at the side-effect layer.
 - **Disposition:** FIXED for the rotation (loud). The remaining sites are named here; each is
   logged as a candidate (the skill's declined-finding rule: silence reads as "never found").
+
+### F-17 — the SECURITY audit: 10 findings, all resource-exhaustion/hardening (2026-10-01)
+- **What happened:** a fresh-context `security-reviewer` subagent probed the 4 files and returned
+  **0 critical, 3 high, 4 medium, 3 low** — every one a resource-exhaustion or hardening gap,
+  none an exploit in the confinement logic (that came back CLEAN).
+- **The 3 highs:** (H1) the law-count PRE-FILTER read candidate kg.json files with NO size cap — a
+  planted 2GB graph OOM'd the server before loadStore's 16MB gate ever ran; (H2) the judge response
+  was parsed with no byte cap and walked with no key cap; (H3) attacker-controlled method/uri/file
+  strings entered the buffered receipt UNCAPPED (7 x 30MB frames retained ~200MB and defeated the
+  rotation).
+- **Root cause (the class):** every cap existed SOMEWHERE but not on the HOTTEST path of its
+  surface — the discovery pre-filter, the network parse, the observability sink, the doc table's
+  cardinality, the per-keystroke tokenizer, the partial-frame wait, the allowlist's raw side.
+- **Impact:** none shipped; the LSP was reachable only by a local client, but the gaps were real.
+- **Disposition:** ALL 10 FIXED + PINNED (A45), battery 58/0/196, dist 0638723b85a564e0.

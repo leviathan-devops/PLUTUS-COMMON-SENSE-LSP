@@ -237,3 +237,16 @@ Each round: every BLOCKING finding adjudicated + fixed; every fix pinned. Batter
   49 REFUSE + 197 L2 vs 124 PUBLISH).
 - **The verdict:** PASS — every receipt row is now signal; the reflex is silent where it must be.
 - **The artifacts:** the receipt (`forensic/lsp-receipts.log`) + the probe (`/tmp/noise-ratio.ts`).
+
+## TEST RESULT + AUDIT GATE — 2026-10-01 — the SECURITY audit (round 23)
+
+### SCRIPT — audit gate (the security reader)
+- **The run:** a fresh-context `security-reviewer` subagent (33m37s) probing the confinement,
+  resource growth, injection, hostile-judge, and framing surfaces.
+- **The raw output:** `SECURITY: 0 critical, 3 high, 4 medium, 3 low` (10 findings) + a coverage
+  map of the surfaces probed CLEAN (fileOf confinement, the stdin guards, the L2 caps, the
+  fail-closed verdict, the card caps).
+- **The verdict:** FAIL at intake → **ALL 10 FIXED + PINNED** (A45). Battery 58/0/196.
+- **The artifacts:** `artifacts/sg-ocr-round23.json`; the full report at `'/home/leviathan/.omp/agent/sessions/-JARVIS_WORKSPACE-Shared_Workspace/2026-09-14T22-37-06-586Z_01a0a211-209a-74ed-8ec4-162d8bcd9a20/AdversarialProber.md'`.
+
+## AUDIT GATE: FAIL at intake (0c/3h/4m/3l) → all fixed — artifacts/sg-ocr-round23.json

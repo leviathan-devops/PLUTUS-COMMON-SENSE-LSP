@@ -1370,7 +1370,14 @@ ${j}`);
     sendChainRef = sendChain;
   };
   const SYSTEM_DENY = /^\/(etc|proc|sys|dev|root|boot|var\/lib|usr\/bin|usr\/sbin)(\/|$)/;
-  const ALLOWED_ROOTS = (process.env.PLUTUS_ALLOWED_ROOTS ?? "").split(":").filter(Boolean);
+  const ALLOWED_ROOTS = (process.env.PLUTUS_ALLOWED_ROOTS ?? "").split(":").filter(Boolean).map((r) => {
+    try {
+      const c = realpathSync2(resolve2(r));
+      return statSync2(c).isDirectory() ? c : null;
+    } catch {
+      return null;
+    }
+  }).filter((r) => r !== null);
   const fileOf = (uri) => {
     if (!/^file:/i.test(uri))
       throw new Error(`NON_FILE_SCHEME: ${uri.slice(0, 40)}`);

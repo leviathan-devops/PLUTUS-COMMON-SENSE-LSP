@@ -436,6 +436,8 @@ test("A45_security_caps_present (the security auditor's 10)", async () => {
   expect(server).toContain("STDIN_IDLE_RESET");
   // L1: every skip path copies
   expect((server.match(/Buffer\.from\(rest\)/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  // M4: the allowlist is canonicalized
+  expect(server).toContain("realpathSync(resolve(r))");
   // L2/L3: the bounded stringify + the capped interpolation
   expect(judge).toContain("Object.keys(j as object).slice(0, 8)");
   expect(judge).toContain("String(l.statement).slice(0, 500)");

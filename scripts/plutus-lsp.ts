@@ -334,7 +334,13 @@ if (process.argv.includes("--stdio")) {
   // a misbehaving client must not probe the host. System dirs are refused outright; a
   // PLUTUS_ALLOWED_ROOTS allowlist (colon-separated) confines further when set.
   const SYSTEM_DENY = /^\/(etc|proc|sys|dev|root|boot|var\/lib|usr\/bin|usr\/sbin)(\/|$)/;
-  const ALLOWED_ROOTS = (process.env.PLUTUS_ALLOWED_ROOTS ?? "").split(":").filter(Boolean);
+  // SEC-M4 FIX — the allowlist was prefix-compared RAW while rp was canonical: symlink/`..`/
+  // relative entries never matched their real meaning (fail-closed noise that pushes operators
+  // to unset the gate). Canonicalized ONCE: resolve + realpath each entry, keep only real dirs.
+  const ALLOWED_ROOTS = (process.env.PLUTUS_ALLOWED_ROOTS ?? "")
+    .split(":").filter(Boolean)
+    .map((r) => { try { const c = realpathSync(resolve(r)); return statSync(c).isDirectory() ? c : null; } catch { return null; } })
+    .filter((r): r is string => r !== null);
   const fileOf = (uri: string): string => {
     if (!/^file:/i.test(uri)) throw new Error(`NON_FILE_SCHEME: ${uri.slice(0, 40)}`);
     // FIX (audit: UNC + decode order) — split scheme/authority/path/query/fragment on the RAW
