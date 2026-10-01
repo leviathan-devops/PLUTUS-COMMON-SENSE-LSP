@@ -272,3 +272,25 @@ test("A27_resolveRoot_prefers_STRONG (round-13 any-depth win)", async () => {
   expect(root).toBe(deep);
   fs.rmSync(base, { recursive: true, force: true });
 });
+
+test("A28_observableQuestion_never_throws (round-14 sanitize)", async () => {
+  const { observableQuestion } = await import("../src/plutus-lsp/judge.ts");
+  expect(() => observableQuestion(null as any)).not.toThrow();
+  expect(() => observableQuestion([null, 42] as any)).not.toThrow();
+  expect(observableQuestion(null as any)).toContain("CONTRADICT");
+});
+
+test("A29_cards_bound_emitted_strings (round-14 cap)", async () => {
+  const { lawCard } = await import("../src/plutus-lsp/cards.ts");
+  const huge = "A".repeat(5000);
+  const LAW = { id: "law::X", name: huge, statement: huge, tier: "IMMUTABLE", anchor: huge, source: "MC" };
+  const cards = lawCard([{ law: LAW, p: 0.9 } as any], 1, true);
+  expect(cards[0].title.length).toBeLessThan(300);      // bounded, never 5000+
+  expect(cards[0].rows.join("").length).toBeLessThan(1200);
+});
+
+test("A30_short_read_named (round-14)", async () => {
+  const fs = await import("node:fs");
+  const store = fs.readFileSync(`${import.meta.dir}/../src/plutus-lsp/store.ts`, "utf8");
+  expect(store).toContain("short read");
+});

@@ -33,6 +33,24 @@ export const PLUTUS_LSP_TOKENS = [
 export type PlutusLspToken = (typeof PLUTUS_LSP_TOKENS)[number];
 
 export const SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 } as const;
+
+// FIX (audit round-14: bound every interpolated string) — store/judge strings flowed verbatim
+// into titles/rows. LSP diagnostic messages are PLAIN TEXT (editors render them as text, not
+// markdown/HTML), so the risk is SIZE + spoofing via unbounded/control characters, not markup.
+// cap() bounds length and strips CR/LF/control chars, keeping the payload readable. A consumer
+// that DOES render markup must escape on ITS side; the server guarantees plain, bounded text.
+// FIX (audit round-14: ONE source renderer) — trim + whitespace-only + fallback in one place
+// so LAW rows and verdict rows can never disagree (one printed blanks, the other the fallback).
+const srcOf = (law: { anchor?: unknown }): string => {
+  const a = typeof law.anchor === "string" ? law.anchor.trim() : "";
+  return a.length > 0 ? cap(a, 200) : "(anchor missing)";
+};
+
+const cap = (v: unknown, n = 240): string => {
+  const t = typeof v === "string" ? v : v == null ? "" : String(v);
+  const flat = t.replace(/[\r\n\t\u0000-\u001f\u007f]+/g, " ");
+  return flat.length > n ? `${flat.slice(0, n)}…` : flat;
+};
 type Sev = (typeof SEVERITY)[keyof typeof SEVERITY];
 
 export type CardShape = "LAW" | "VIOLATION" | "DRIFT" | "CALLERS" | "SUSPECT" | "STALE";
@@ -92,13 +110,13 @@ export function lawCard(kept: JudgedLaw[] | null | undefined, totalCandidates: n
     const of = tot > n ? ` · kept ${n} of ${tot} candidates` : "";
     return {
       shape: "LAW" as const,
-      title: `${law.name} — governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
+      title: `${cap(law.name, 80)} — governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
       rows: [
-        `LAW: ${law.statement}`,
+        `LAW: ${cap(law.statement, 400)}`,
         // FIX (audit round-11: tier/anchor fallbacks) — clean only checks name/statement, so a
         // corrupt store rendered `TIER: undefined` / `SOURCE: undefined`. Named fallbacks now.
         `TIER: ${law.tier ?? "(tier missing)"}${law.tier === "IMMUTABLE" ? " — never change without a recorded ruling" : ""}`,
-        `SOURCE: ${law.anchor ?? "(anchor missing)"}`,
+        `SOURCE: ${srcOf(law)}`,
         // FIX (audit: lexical path mislabeled) — when no judge ran, the row says LEXICAL,
         // never a probability (traceability: a number must come from the model that ran it)
         judged ? `JUDGE: ${prob}` : `LEXICAL: token match, not judged`,
@@ -134,11 +152,11 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
     // FIX (audit round-11: reason typeof guard) — a non-string reason (number/object via JS
     // interop) threw on .split and lost every card. Non-strings get the named code.
     const raw = typeof v.reason === "string" && v.reason.length > 0 ? v.reason : "JEVK5_DOWN";
-    const code = /^(PLUTUS_NO_[A-Z]+|JEVK5_DOWN|[A-Z0-9_]+)/.exec(raw)?.[1]?.slice(0, 32) ?? "JEVK5_DOWN";
+    const code = staleCode(raw, "JEVK5_DOWN");
     return {
       shape: "STALE",
       title: `the judge is down — the canon could not be consulted [${code}]`,
-      rows: [`reason: ${v.reason ?? "JEVK5_DOWN"}`],
+      rows: [`reason: ${cap(v.reason ?? "JEVK5_DOWN", 300)}`],
       severity: SEVERITY.Warning,
       source: "plutus/stale",
       total: 1,
@@ -195,12 +213,17 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   const anchorFile = (() => {
     // FIX (audit round-13: typeof guards) — a number/object via JS interop passed `??` then
     // threw on .trim(), losing every card. Non-strings fall through to the fallbacks.
-    const t = typeof targetFile === "string" ? targetFile.trim() : "";
+    // FIX (audit round-14: strip on BOTH branches) — the old early-return on targetFile
+    // skipped the strip, so `src/foo.ts:10:5` rendered with line:col. One strip for both.
+    const strip = (v: unknown): string => {
+      if (typeof v !== "string") return "";
+      const m = /^(.*?)(?::\d+(?::\d+)?)?$/.exec(v.trim());
+      return m ? m[1] : v.trim();
+    };
+    const t = strip(targetFile);
     if (t) return t;
-    const a = typeof law.anchor === "string" ? law.anchor.trim() : "";
-    if (!a) return "(anchor missing)";
-    const m = /^(.*?)(?::\d+(?::\d+)?)?$/.exec(a);
-    return m ? m[1] : a;
+    const a = strip(law.anchor);
+    return a || "(anchor missing)";
   })();
   // FIX (audit: explicit kind gate) — an unknown kind coerces to SUSPECT LOUDLY: the row
   // names the coerced kind instead of silently casting via `as`. Only VIOLATION/DRIFT survive.
@@ -215,13 +238,13 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   if (effKind === "VIOLATION" && v.kind === "VIOLATION" && !vacuous) {
     return {
       shape: "VIOLATION",
-      title: `VIOLATION — this change contradicts ${law.name} (${v.weakest}=${pct(weakScore)})`,
+      title: `VIOLATION — this change contradicts ${cap(law.name, 80)} (${v.weakest}=${pct(weakScore)})`,
       rows: [
-        `LAW: ${law.statement}`,
+        `LAW: ${cap(law.statement, 400)}`,
         // FIX (audit round-13: verdict rows share the fallback) — lawCard had it, the verdict
         // rows rendered `SOURCE: undefined` on a corrupt store. One bar everywhere.
-        `SOURCE: ${typeof law.anchor === "string" && law.anchor.length > 0 ? law.anchor : "(anchor missing)"}`,
-        `YOU ARE EDITING: ${anchorFile} — read the law before this edit lands`,
+        `SOURCE: ${srcOf(law)}`,
+        `YOU ARE EDITING: ${cap(anchorFile, 200)} — read the law before this edit lands`,
         `VECTOR: ${vecStr}`,
       ],
       severity: SEVERITY.Error,
@@ -237,7 +260,7 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
     return {
       shape: "DRIFT",
       title: `DRIFT — this change contradicts a prior decision (${dc}=${pct(vector[dc as keyof typeof vector])})`,
-      rows: [`LAW: ${law.statement}`, `SOURCE: ${typeof law.anchor === "string" && law.anchor.length > 0 ? law.anchor : "(anchor missing)"}`, `VECTOR: ${vecStr}`],
+      rows: [`LAW: ${cap(law.statement, 400)}`, `SOURCE: ${srcOf(law)}`, `VECTOR: ${vecStr}`],
       severity: SEVERITY.Warning,
       source: "plutus/drift",
       total: 1,
@@ -248,8 +271,8 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   // at two severities.
   return {
     shape: "SUSPECT",
-    title: `SUSPECT — ${law.name} may be breached (${v.weakest ?? "none"}=${pct(v.weakest ? vector[v.weakest as keyof typeof vector] : undefined)})${kindNote}; evidence required`,
-    rows: [`LAW: ${law.statement}`, `SOURCE: ${typeof law.anchor === "string" && law.anchor.length > 0 ? law.anchor : "(anchor missing)"}`, `VECTOR: ${vecStr}`],
+    title: `SUSPECT — ${cap(law.name, 80)} may be breached (${v.weakest ?? "none"}=${pct(v.weakest ? vector[v.weakest as keyof typeof vector] : undefined)})${kindNote}; evidence required`,
+    rows: [`LAW: ${cap(law.statement, 400)}`, `SOURCE: ${srcOf(law)}`, `VECTOR: ${vecStr}`],
     severity: SEVERITY.Warning,
     source: "plutus/suspect",
     total: 1,
@@ -278,6 +301,12 @@ export function callersCard(callers: unknown): FactCard | null {
   };
 }
 
+// FIX (audit round-14: ONE stale-code extractor) — the duplicated regex had a third
+// alternative ([A-Z0-9_]+) that subsumed the first two, so any HELLO_WORLD became a code and
+// PLUTUS_NO_[A-Z]+ truncated digits/underscores. One helper: the leading SCREAMING_SNAKE token.
+const staleCode = (raw: string, dflt = "PLUTUS_NO_STORE"): string =>
+  /^([A-Z][A-Z0-9_]*)/.exec(raw.trim())?.[1]?.slice(0, 32) ?? dflt;
+
 /** STALE — a named refusal (no graph, judge down). A loud card, never a silent pass. */
 export function staleCard(reason: string | null | undefined): FactCard {
   // FIX (audit: STALE disambiguation) — same shape/source as the JUDGE_DOWN card above; the
@@ -287,11 +316,11 @@ export function staleCard(reason: string | null | undefined): FactCard {
   // FIX (audit round-13: code allowlisted + capped) — the raw split let `:...` yield an
   // empty code and unbounded model prose pollute the filterable title. Same bar as JUDGE_DOWN.
   const rs = typeof reason === "string" && reason.length > 0 ? reason : "PLUTUS_NO_STORE: unknown";
-  const code = /^(PLUTUS_NO_[A-Z]+|JEVK5_DOWN|[A-Z0-9_]+)/.exec(rs)?.[1]?.slice(0, 32) ?? "PLUTUS_NO_STORE";
+  const code = staleCode(rs);
   return {
     shape: "STALE",
     title: `the canon graph is unavailable [${code}]`,
-    rows: [`reason: ${rs}`],
+    rows: [`reason: ${cap(rs, 300)}`],
     severity: SEVERITY.Warning,
     source: "plutus/stale",
     total: 1,

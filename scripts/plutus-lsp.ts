@@ -158,7 +158,20 @@ export async function pipeline(file: string, source: string, useJudge = true): P
 
 // FIX (audit round-13: receipts flush on exit) — the buffered writer lost the last ~500ms
 // on every process.exit path (selftest 0/1/2, shutdown, stdin close/end/error). Flush first.
-const exitFlushed = (code: number): never => { try { receiptFlush(); } catch { /* best-effort */ } process.exit(code); };
+// FIX (audit round-14: drain the send chain before exit) — send() serializes on sendChain,
+// but the old exitFlushed called process.exit() immediately, dropping the shutdown response
+// and the last publishDiagnostics. Flush receipts, then await the chain (bounded), then exit.
+const exitFlushed = (code: number): void => {
+  try { receiptFlush(); } catch { /* best-effort */ }
+  // bounded drain: never hang the exit on a wedged stdout
+  let done = false;
+  const finish = () => { if (!done) { done = true; process.exit(code); } };
+  const guard = setTimeout(finish, 1500);
+  if (typeof sendChainRef === "undefined" || !sendChainRef) { clearTimeout(guard); finish(); return; }
+  Promise.resolve(sendChainRef).catch(() => {}).then(() => { clearTimeout(guard); finish(); });
+};
+// the stdio block installs its serialized write chain here so exits can drain it
+let sendChainRef: Promise<void> | null = null;
 // ── THE SELFTEST (the W4 gate) ───────────────────────────────────────────────
 if (process.argv.includes("--selftest")) {
   const i = process.argv.indexOf("--selftest");
@@ -209,6 +222,7 @@ if (process.argv.includes("--stdio")) {
         process.stdout.write(frame, (err?: Error | null) => { if (err) log(`SEND_FAIL: ${err.message}`); clearTimeout(to); done(); });
       } catch (e) { log(`SEND_THROW: ${(e as Error).message}`); clearTimeout(to); done(); }
     })).catch((e) => { log(`SEND_FAIL: ${(e as Error).message}`); });
+    sendChainRef = sendChain;   // round-14: exits drain the LIVE chain before process.exit
   };
 
   /** FIX (audit: decode LAST, UNC preserved, non-file refused) — strip the scheme, then
@@ -227,7 +241,10 @@ if (process.argv.includes("--stdio")) {
     let p: string;
     try { p = decodeURIComponent(rawPath); }
     catch { throw new Error(`BAD_ENCODING: ${uri.slice(0, 60)}`); }
-    if (auth && auth.toLowerCase() !== "localhost") return `//${auth}${p}`;   // UNC preserved
+    // FIX (audit round-14: UNC refused) — the server reads LOCAL files; a `//host/share` path
+    // resolves outside the workspace and probes the filesystem. Non-localhost authority is a
+    // NON_FILE_SCHEME-class refusal, never a path handed to loadStore.
+    if (auth && auth.toLowerCase() !== "localhost") throw new Error(`NON_LOCAL_AUTHORITY: ${uri.slice(0, 60)}`);
     if (/^\/[a-zA-Z]:[\/]/.test(p)) return p.slice(1);                      // /c:/x -> c:/x
     return p;
   };
@@ -361,7 +378,11 @@ if (process.argv.includes("--stdio")) {
           textDocument?: { uri?: string; text?: string };
           contentChanges?: Array<{ text?: string }>;
         } | undefined;
-        const uri = p?.textDocument?.uri ?? "";
+        // FIX (audit round-14: uri typeof-checked) — a numeric/object uri passed `if(uri)`,
+        // corrupted the Map and coerced through fileOf. Non-strings are dropped.
+        const rawUri = (p as { textDocument?: { uri?: unknown } } | undefined)?.textDocument?.uri;
+        const uri = typeof rawUri === "string" ? rawUri : "";
+        if (rawUri !== undefined && uri === "") { log(`PARAMS_REJECTED: uri is ${typeof rawUri}`); continue; }
         // FIX (audit scripts:132 + incremental validation): the server advertises full-sync
         // (change:1). A fragment WITHOUT `text` (an incremental range edit) would corrupt the
         // doc if applied blindly — LOG it and keep the last known good text instead.
@@ -369,10 +390,11 @@ if (process.argv.includes("--stdio")) {
         // the stdin handler (server crash); a non-string text poisoned docs (src.split threw
         // later); a non-string uri threw in fileOf. Garbage params are REJECTED, never stored.
         const rawCC = (p as { contentChanges?: unknown } | undefined)?.contentChanges;
-        // FIX (audit round-13: reject CONTINUES the drain) — the old `break` exited the frame
-        // loop, so complete frames buffered BEHIND the bad one waited for the next stdin chunk
-        // (possibly never). A bad frame is SKIPPED (sliced past); the drain continues.
-        if (rawCC !== undefined && !Array.isArray(rawCC)) { log(`PARAMS_REJECTED ${uri}: contentChanges is ${typeof rawCC}`); buf = buf.subarray(head + 4); continue; }
+        // FIX (audit round-14: the frame is ALREADY drained) — the body was consumed via
+        // `buf = buf.subarray(head + 4 + n)` BEFORE this validation, so re-slicing with the
+        // stale `head` (round-13's fix) discarded queued valid frames behind the bad one.
+        // Just `continue`: the bad frame is already out of buf.
+        if (rawCC !== undefined && !Array.isArray(rawCC)) { log(`PARAMS_REJECTED ${uri}: contentChanges is ${typeof rawCC}`); continue; }
         const cc = (Array.isArray(rawCC) ? rawCC : []) as Array<{ text?: unknown; range?: unknown }>;
         for (const frag of cc) {
           if (frag && typeof frag === "object" && !("text" in frag)) {

@@ -142,7 +142,7 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
   if (valid.length + invalid.length < nodes.length) note(`CHAIN deduped ${nodes.length} → ${valid.length + invalid.length} (duplicates collapsed)`);
   if (valid.length === 0) return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const questions: Record<string, { type: "noul"; instructions: string }> = {};
-  for (const id of valid) questions[id] = { type: "noul", instructions: id === "P4" && p4Override ? p4Override : CHAIN[id].q };
+  for (const id of valid) questions[id] = { type: "noul", instructions: id === "P4" && typeof p4Override === "string" && p4Override.length > 0 ? p4Override : CHAIN[id].q };
 
   // FIX (audit: chain reuses jevk5Fetch) — the old body reimplemented AbortController+fetch+
   // [0,1] validation inline and had already drifted (entries-loop vs per-node loop, different
@@ -163,6 +163,12 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
 }
 
 /** The evidence text — assembled FROM DISK by the caller (never agent prose). */
+// FIX (audit round-14: ONE prioritizer) — buildState (slice 6) and relevancePass (slice 12)
+// each re-wrote the same IMMUTABLE-first comparator; the cap/ordering drift already caused
+// past bugs. One helper returns an ordered copy.
+const prioritizeImmutable = (laws: LawEntity[]): LawEntity[] =>
+  [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
+
 export function buildState(target: string, laws: LawEntity[], hunk: string): string {
   // FIX (audit round-11: null guards on disk inputs) — a null law entry or non-string hunk
   // (an upstream disk-read failure) threw instead of degrading. Garbage in → named state out.
@@ -171,7 +177,7 @@ export function buildState(target: string, laws: LawEntity[], hunk: string): str
   laws = Array.isArray(laws) ? laws.filter((l) => l && typeof l.name === "string" && typeof l.statement === "string") : [];
   // FIX (audit judge.ts:96): an explicit marker — a silent cut risks a false LAW
   // FIX (audit judge.ts:101): IMMUTABLE first — a truncation must not drop the governing law
-  const ordered = [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
+  const ordered = prioritizeImmutable(laws);
   const kept = ordered.slice(0, 6);
   const lawText = kept.map((l) => `[${l.tier}] ${l.name}: ${l.statement} (anchor ${l.anchor})`).join("\n")
     + (laws.length > kept.length ? `\n... [${laws.length - kept.length} more laws truncated]` : "");
@@ -300,6 +306,12 @@ export const OBSERVABLE: Array<{ match: RegExp; q: string }> = [
 
 /** The best observable question for a set of laws — the FIRST template that matches, else the generic. */
 export function observableQuestion(laws: LawEntity[]): string {
+  // FIX (audit round-14: sanitize first) — the old code iterated `laws` directly and
+  // dereferenced l.name/l.statement: null, non-array, or malformed input threw instead of
+  // degrading to the generic fallback. Same bar as buildState/relevancePass.
+  if (!Array.isArray(laws)) return CHAIN.P4.q;
+  laws = laws.filter((l) => l && typeof l.name === "string" && typeof l.statement === "string");
+  if (laws.length === 0) return CHAIN.P4.q;
   // FIX (audit round-11: specificity measured the WRONG TEXT) — the old score counted the
   // TEMPLATE's generic words (does/evidence/state) appearing in the LAW, so longer templates
   // auto-won and substring includes() inflated hits. Now: the LAW's distinctive tokens
@@ -400,7 +412,7 @@ export async function relevancePass(
   // FIX (audit round-12: sanitize BEFORE sort) — a null entry threw on .tier and a missing
   // statement threw on .slice. Filter first, then order, then map.
   const CAPPED = 12;
-  const ordered = [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
+  const ordered = prioritizeImmutable(laws);
   const judged = ordered.slice(0, CAPPED);
   const dropped = laws.length - judged.length;
 
@@ -471,7 +483,7 @@ export function partitionByRelevance(
   // a candidate. Keep-first, receipt the collapse so a caller bug is visible.
   const byId = new Map<string, LawEntity>();
   for (const l of laws) {
-    if (byId.has(l.id)) { receipt(`PARTITION duplicate lawId ${l.id} — keep-first`); continue; }
+    if (byId.has(l.id)) { try { receipt(`PARTITION duplicate lawId ${l.id} — keep-first`); } catch { /* best-effort */ } continue; }
     byId.set(l.id, l);
   }
   const relevant: LawEntity[] = [];

@@ -166,6 +166,8 @@ export function l1PathFor(root: string): string {
 export function loadStore(startFile: string): Store {
   const root = resolveRoot(startFile);
   const l1Path = l1PathFor(root);
+  // (round-14: the read below distinguishes an EMPTY file from a special/pipe file; a short
+  // read past EOF is reported as INCOMPLETE rather than silently parsed as truncated JSON.)
   if (!existsSync(l1Path)) {
     throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} absent (root=${root})`);
   }
@@ -188,6 +190,9 @@ export function loadStore(startFile: string): Store {
       const buf = Buffer.alloc(st.size);
       let off = 0;
       while (off < st.size) { const n = readSync(fd, buf, off, st.size - off, null); if (n <= 0) break; off += n; }
+      // FIX (audit round-14: a SHORT read is named, never parsed as truncated JSON) — if the
+      // file shrank mid-read (concurrent truncation), the partial bytes are NOT a valid doc.
+      if (off < st.size) throw new Error(`short read ${off}/${st.size} bytes (file changed during read)`);
       raw = buf.subarray(0, off).toString("utf8");
     } finally { closeSync(fd); }
   } catch (e) {
@@ -301,11 +306,15 @@ export async function readL2(socketPath: string, timeoutMs = 800): Promise<L2Res
       chunks.push(cb);
       total += cb.length;
       if (total > 32 * 1024 * 1024) { finish({ ok: false, reason: `L2_OVERSIZE: ${total} bytes` }); return; }
-      const b = Buffer.concat(chunks, total);
-      if (b.length < 4) return;
-      const need = 4 + b.readUInt32BE(0);
+      // FIX (audit round-14: concat-once, ONLY when needed) — the old code concat\'d on EVERY
+      // data event just to read the 4-byte prefix (O(n²) to the cap). The prefix is read from
+      // the first 4 bytes once buffered; the full concat runs only when the frame is complete.
+      if (total < 4) return;
+      const head = Buffer.concat(chunks, Math.min(total, 4)).readUInt32BE(0);
+      const need = 4 + head;
       if (need > 16 * 1024 * 1024 + 4) { finish({ ok: false, reason: `L2_FRAME_TOO_LARGE` }); return; }
       if (total < need) return;
+      const b = Buffer.concat(chunks, total);
       // FIX (audit round-11: dead checks REMOVED) — the old code re-checked b.length>32MB,
       // b.length<4, n>16MB and b.length<4+n here, but b.length===total>=need>=4 already, so
       // every one was unreachable (a duplicate of the total/need gates above that masks
@@ -497,8 +506,12 @@ export function callersOf(store: Store, filePath: string): string[] {
     if (r.type !== "imports") return false;
     const t = norm(r.target);
     if (!t) return false;
-    // a suffix match ONLY on a segment boundary: "a/util.ts" must not match "xa/util.ts"
-    return t === fp || (t.endsWith(tail) && t.endsWith(`/${tail}`));
+    // FIX (audit round-14: the conjunction was redundant) — t.endsWith('/'+tail) already
+    // implies t.endsWith(tail); the first clause added nothing. One boundary match.
+    // NOTE (adjudicated): the direction is CORRECT as-is — the graph's targets are FULL
+    // relative paths (e.g. sources/bible40.md) and fp is the full file path; the TARGET must
+    // end with the FILE (the importer points AT this file), never the reverse.
+    return t === fp || t.endsWith(`/${tail}`);
   });
   // FIX (audit round-11: deterministic order) — sort before slicing so the same graph
   // always yields the same callers.
