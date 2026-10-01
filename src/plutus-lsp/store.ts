@@ -165,7 +165,9 @@ function lawCount(p: string): number {
 /** The first-4KB fingerprint of a file (the cache's content check). Absent → "". */
 function head4(p: string): string {
   try {
-    const fd = openSync(p, "r");
+    // FIX (r19 H3: the FIFO hang) — a plain openSync BLOCKS on a FIFO; the cache's content
+    // check must never hang the server. O_NONBLOCK (the same discipline loadStore got).
+    const fd = openSync(p, FS.O_RDONLY | FS.O_NONBLOCK);
     try {
       const b = Buffer.alloc(4096);
       const n = readSync(fd, b, 0, 4096, 0);

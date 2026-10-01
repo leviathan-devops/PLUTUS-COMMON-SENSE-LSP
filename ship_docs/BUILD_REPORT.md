@@ -179,3 +179,22 @@ existing; (M3) `PLUTUS_NO_ROOT` → silent (out-of-scope), only a marker-bearing
 **The evidence:** battery 48/0/160; derailment 6/6; bundle `c624683bd9b220c1`.
 **The honest notes:** the fixes are pinned (A35/A36); the remaining M4-M6 (receipt rotation,
 single-flight) are recorded in the boilerplate's MISFIRES.md.
+
+## §11 · THE FLAW-REPORT FIXES + THE SCOPE GATE (2026-10-01)
+
+**The built:** F-1 law-bearing graph resolution; F-2 the pull handler; F-3 ranged edits applied;
+F-6 didSave; F-10 the dead token retired (6 tokens); the `isPlutusScoped` gate (segment-name +
+bounded-file, 7/7 probe); A37/A38/A39 pins.
+**The why:** the independent flaw report (an agent found this mid-other-task) — the LSP was silent
+where it matters, loud where it does not.
+**The how:** `lawCount()` scoping in `l1PathFor` (local → cache → ancestor climb → known); the
+pull path shares the analyze path; the scope gate sits FIRST in the pipeline (out-of-scope =
+silent, no card, no receipt noise).
+**The evidence:** battery 52/0/171; derailment 6/6; scope 7/7; pull `{"id":2,…}` no -32601;
+dashboard → 564 laws.
+**The honest notes:** F-5 (silent lexical degrade) queued; F-7 (config ignored, documented);
+F-9 (receipt rotation) queued; F-11 (topK) documented; F-12 ($/cancelRequest) handled best-effort.
+
+**Dist fingerprint (this update):**
+
+Dist fingerprint (this update): `6332e68445636f5f`

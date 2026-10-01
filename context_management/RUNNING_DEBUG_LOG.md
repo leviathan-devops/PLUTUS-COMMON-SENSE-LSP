@@ -69,3 +69,10 @@
 - FIX: queued per finding (each gets its own fix + pin + re-scan). No rushed batch — F-07 stands.
 - LESSON: the confinement subsystem is the defect farm; every fix there needs its own adversarial pin set.
 - EVIDENCE: artifacts/sg-ocr-round19.json; TESTING_LOG verdict line; F-08/F-09 OPEN.
+
+## [2026-10-01T23:30] — the scope gate's two loose cuts (self-caught by the probe)
+- SYMPTOM: the 7-case scope probe showed 5/7 (two foreign trees IN).
+- ROOT CAUSE: (1) `existsSync(join(dir,"PLUTUS"))` fires for any ancestor merely HAVING a PLUTUS child; (2) the stale `~/.plutus/` dir scoped the entire home via the marker-file branch.
+- FIX: segment-name (`basename(dir)==="PLUTUS"`) + bounded-file (below $HOME, isFile not existsSync). 7/7.
+- LESSON: a scope test on CHILD-EXISTENCE is a scope test on the parent — the test must be the SEGMENT, not the CHILD.
+- EVIDENCE: /tmp/scope-probe.ts 7/7; A37 pins the segment rule.

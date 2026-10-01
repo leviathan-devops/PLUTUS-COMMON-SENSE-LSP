@@ -30,7 +30,31 @@ interface Case {
   clean?: boolean;           // a CLEAN edit — the LSP must stay SILENT (the precision proof)
 }
 
-const F = (n: string) => `${ROOT}/src/plutus-lsp/${n}`;
+// THE SCOPE-AWARE FIXTURE ROOT (2026-10-01) — the scope gate silences files outside a
+// Plutus-scoped tree, so the suite's fixtures live under a root carrying `plutus.yaml`
+// (the explicit scope marker). The derailment hunks are unchanged; only the carrier moves.
+const FIXTURE_ROOT = "/tmp/pcsl-derailment";
+mkdirSync(`${FIXTURE_ROOT}/.omp/graph-intelligence/layers/semantica`, { recursive: true });
+writeFileSync(`${FIXTURE_ROOT}/plutus.yaml`, "scope: plutus\n");           // the SCOPE marker
+writeFileSync(`${FIXTURE_ROOT}/tsconfig.json`, "{}");                       // the ROOT marker
+// THE HERMETIC LAW FIXTURE — the suite carries its OWN mini-Plutus graph (no host dependency):
+// one law per derailment class, each with the tokens the hunks carry.
+const LAWS = [
+  { id: "D17", type: "law", name: "SL-CEILING", statement: "stop-loss ceiling = 36 pips HARD; SL cap in pips never exceeds 36", tier: "IMMUTABLE", anchor: "engine3:307", source: "MASTER_CONTEXT" },
+  { id: "ONE-TP", type: "law", name: "SINGLE-TP", statement: "exactly ONE take-profit per trade; no TP1 TP2 TP3 ladder", tier: "IMMUTABLE", anchor: "bible40:2997", source: "MASTER_CONTEXT" },
+  { id: "PAIR-FMT", type: "law", name: "PAIR-FORMAT", statement: "currency pairs use the slash form EUR/USD, never EURUSD", tier: "IMMUTABLE", anchor: "bible12:88", source: "MASTER_CONTEXT" },
+  { id: "RRR-1", type: "law", name: "CATEGORY-RRR", statement: "risk-reward ratio is category-specific; a flat RRR across categories is forbidden", tier: "EVOLVING", anchor: "bible27:410", source: "MASTER_CONTEXT" },
+  { id: "IRON-01", type: "law", name: "ZFP-THRESHOLD", statement: "ZFP threshold = 45; changing the zone-formation threshold is a canon breach", tier: "IMMUTABLE", anchor: "bible40:2997", source: "MASTER_CONTEXT" },
+];
+writeFileSync(`${FIXTURE_ROOT}/.omp/graph-intelligence/layers/semantica/kg.json`,
+  JSON.stringify({ entities: LAWS, relationships: [] }));
+const FIXTURE_GRAPH = `${FIXTURE_ROOT}/.omp/graph-intelligence/layers/semantica/kg.json`;
+const F = (n: string) => {
+  const dest = `${FIXTURE_ROOT}/${n}`;
+  try { writeFileSync(dest, readFileSync(`${ROOT}/src/plutus-lsp/${n}`, "utf8")); } catch { writeFileSync(dest, "// fixture\n"); }
+  return dest;
+};
+const SCRATCH = (n: string) => `${FIXTURE_ROOT}/${n}`;
 
 const CASES: Case[] = [
   {
@@ -66,7 +90,7 @@ const CASES: Case[] = [
   {
     id: "D6", what: "a fact-free file — the LSP must stay SILENT (the precision proof)",
     // a scratch path with NO canonical tokens; the hunk has none either
-    file: `${ROOT}/src/xqzy.ts`,
+    file: SCRATCH("xqzy.ts"),
     hunk: `const xqzy = 1; // nothing canonical here at all\n`,
     passToken: "NO-LAW",                 // the receipt line for a zero-candidate file
     clean: true,
@@ -77,7 +101,8 @@ const results: Array<Record<string, unknown>> = [];
 let pass = 0, fail = 0;
 
 for (const c of CASES) {
-  process.env.PLUTUS_L1_PATH = process.env.PLUTUS_L1_PATH ?? "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json";
+  process.env.PLUTUS_L1_PATH = FIXTURE_GRAPH;   // hermetic: the suite's own graph
+  try { writeFileSync(c.file.includes("xqzy") ? c.file : `${FIXTURE_ROOT}/_target.ts`, c.file.includes("xqzy") ? "// fact free\n" : ""); } catch { /* best effort */ }
   let out = "";
   let verdict = "NONE";
   let tokens: string[] = [];

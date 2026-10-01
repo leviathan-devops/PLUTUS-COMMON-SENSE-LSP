@@ -43,7 +43,12 @@ export const SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 } as con
 // is defined BEFORE srcOf (round-15: no TDZ). A consumer that DOES render markup must escape
 // on ITS side; the server guarantees plain, bounded text.
 const cap = (v: unknown, n = 240): string => {
-  const t = typeof v === "string" ? v : v === null || v === undefined ? "" : String(v);
+  // FIX (r19 H4: cap() could THROW) — `String(v)` invokes a caller-controlled toString (or
+  // Symbol.toPrimitive); a hostile/odd node threw and lost EVERY card. The conversion is guarded.
+  let t: string;
+  if (typeof v === "string") t = v;
+  else if (v === null || v === undefined) t = "";
+  else { try { t = String(v); } catch { t = "(unprintable)"; } }
   // FIX (round-16: strip C0 + C1 + DEL + unicode line/para separators + bidi controls)
   const flat = t.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ");
   return flat.length > n ? `${flat.slice(0, n)}…` : flat;
@@ -201,14 +206,19 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   // including the fallback, clears the same bar — or there is no card.
   const validLaw = (k: unknown): k is JudgedLaw =>
     !!k && typeof (k as JudgedLaw).law?.name === "string" && typeof (k as JudgedLaw).law?.statement === "string";
-  const law = (finiteTop.find(validLaw) ?? scored.find(validLaw) ?? keptArr.find(validLaw))?.law;
+  const top = finiteTop.find(validLaw);
+  const picked = top ?? scored.find(validLaw) ?? keptArr.find(validLaw);
+  const law = picked?.law;
   if (!law) return null;                            // no measured law → no card, never a guess
   // FIX (audit round-11: epsilon at DISPLAY precision) — 1e-9 caught exact-float ties only,
   // but titles render p.toFixed(2): 0.811 vs 0.807 displayed identically yet attributed
   // confidently. Near-ties within display rounding now downgrade to SUSPECT.
   const EPS = 1e-2;
   const topTied = finiteTop.length > 1 && Math.abs(finiteTop[0].p - finiteTop[1].p) < EPS;
-  const attributed = finiteTop.length > 0 && !topTied;
+  // FIX (r19 H5: the flag is COUPLED to the pick) — the old `attributed` came from
+  // finiteTop[0..1] alone, so a fall-through pick (a weaker fallback law) still read true —
+  // a fallback asserted as measured. Now: attributed iff the PICKED entry IS the finite top.
+  const attributed = !!top && picked === top && !topTied;
 
   // FIX (audit round-15: the vector is bounded too) — a hostile caller's huge vector made an
   // unbounded row. Cap to 8 entries and cap each key.

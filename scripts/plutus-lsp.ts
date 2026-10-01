@@ -12,7 +12,7 @@
  * overridable via PLUTUS_LSP_RECEIPT.
  */
 
-import { readFileSync, appendFileSync, mkdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, appendFileSync, mkdirSync, existsSync, statSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadStore, lawsForHunk, declarationsIn, callersOf, readL2, l2SocketFor, isPlutusScoped } from "../src/plutus-lsp/store.ts";
@@ -81,6 +81,7 @@ const log = (m: string) => { try { appendFileSync(LOG, `${new Date().toISOString
 export interface PipelineResult { tokens: string[]; cards: import("../src/plutus-lsp/cards.ts").FactCard[]; refused: string | null; vector: Record<string, number>; relevance?: Array<{ lawId: string; p: number }> }
 
 export async function pipeline(file: string, source: string, useJudge = true): Promise<PipelineResult> {
+  let degradedCard: FactCard | null = null;   // F-5: the visible "kernel bypassed" card
   // THE SCOPE GATE (the operator's law: "properly scoped ... only fires when the session is
   // actively focused on plutus and not blind firing on literally everything"). A file outside
   // a Plutus-scoped tree gets NOTHING — no card, no receipt noise. The generic rootMarkers can
@@ -158,11 +159,11 @@ export async function pipeline(file: string, source: string, useJudge = true): P
       // unfiltered net — we keep the lexical top-3 and MARK the degraded mode.
       all = candidates.slice(0, 3);
       judgedLaws = all.map((law) => ({ law, p: -1 }));   // the lexical fallback, marked unread
-      // F-5 FIX — a judge failure used to degrade SILENTLY (receipt only). Emit a VISIBLE
-      // card so the agent knows the relevance kernel was bypassed (the STALE shape, coded).
+      // F-5 FIX (the dead-local repair) — the first cut built a STALE card into a local `sc`
+      // and NEVER surfaced it: the degrade stayed silent. The card now rides the normal card
+      // list (below) so the agent SEES that the relevance kernel was bypassed.
       receipt(`RELEVANCE degraded=${rel.reason}`);
-      try { const sc = staleCard(`JUDGE_DEGRADED: ${rel.reason} — relevance kernel bypassed (lexical top-3)`);
-        if (all.length > 0) judgedLaws = all.map((law) => ({ law, p: -1 })); } catch { /* best-effort */ }
+      degradedCard = staleCard(`JUDGE_DEGRADED: ${rel.reason} — relevance kernel bypassed (lexical top-3)`);
     }
   } else if (candidates.length > 0) {
     all = candidates.slice(0, 3);   // the --no-judge path (the unit tests): lexical only
@@ -177,6 +178,7 @@ export async function pipeline(file: string, source: string, useJudge = true): P
     vector = Object.fromEntries(Object.entries(res.answers).map(([k, n]) => [k, Number(n)]));
   }
   const cards = fileCards(judgedLaws, candidates.length, v, callersOf(store, file), useJudge && relevance.length > 0, file);   // FIX F4: the callers read; the warning names the TARGET file
+  if (degradedCard) cards.unshift(degradedCard);   // F-5: the degrade is VISIBLE, first
   const tokens = [...new Set(cards.map((c) => c.source))];
   receipt(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
   return { tokens, cards, refused: null, vector, relevance };
@@ -244,6 +246,11 @@ if (process.argv.includes("--selftest")) {
 if (process.argv.includes("--stdio")) {
   receipt(`INIT pid=${process.pid}`);
   const docs = new Map<string, string>();
+  // FIX (r19 H2: single-flight per uri) — rapid typing stacked 6-20s judge chains; only the
+  // LAST seq published and the CPU burned on stale work. `analyzeSeq` already drops stale
+  // PUBLISHES; this drops the stale WORK too (skip a new analyze while one is in flight for
+  // the same uri — the trailing edit re-schedules).
+  const inFlight = new Set<string>();
   let buf = Buffer.alloc(0);
 
   // FIX (audit: send backpressure + errors) — an unchecked stdout.write can interleave frames
@@ -309,14 +316,25 @@ if (process.argv.includes("--stdio")) {
     // /etc/passwd. path.resolve() normalizes AND clamps at the root, and is the reference
     // implementation. Relative inputs resolve against the workspace root, never cwd.
     const np = resolve(p);
-    if (SYSTEM_DENY.test(np)) throw new Error(`PATH_REFUSED: ${np.slice(0, 60)}`);
-    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => np === r || np.startsWith(r.endsWith("/") ? r : r + "/"))) throw new Error(`PATH_OUTSIDE_ROOTS: ${np.slice(0, 60)}`);
+    // FIX (r19 H1: symlink + cwd gaps) — resolve() is cwd-dependent for RELATIVE inputs and
+    // never follows symlinks. An LSP URI is always absolute; a symlink pointing OUT of the
+    // allowed roots passed the prefix check. realpathSync (when the path exists) closes both.
+    if (!np.startsWith("/")) throw new Error(`PATH_NOT_ABSOLUTE: ${np.slice(0, 60)}`);
+    let rp = np;
+    try { rp = realpathSync(np); } catch { /* not present yet — the prefix check stands */ }
+    if (SYSTEM_DENY.test(rp)) throw new Error(`PATH_REFUSED: ${rp.slice(0, 60)}`);
+    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => rp === r || rp.startsWith(r.endsWith("/") ? r : r + "/"))) throw new Error(`PATH_OUTSIDE_ROOTS: ${rp.slice(0, 60)}`);
     return np;
   };
 
   const seq = new Map<string, number>();   // FIX (audit:133): the per-uri sequence guard
   const pending = new Map<string, ReturnType<typeof setTimeout>>();  // FIX (audit: debounce) — one in-flight analyze per uri
   const analyze = async (uri: string) => {
+    // FIX (r19 H2) — single-flight: skip while another chain is running for this uri (the
+    // trailing edit re-schedules; the older chain is stale work by definition).
+    if (inFlight.has(uri)) { receipt(`SKIP_INFLIGHT ${uri}`); return; }
+    inFlight.add(uri);
+    try {
     // FIX (audit round-12: fileOf INSIDE the try) — the old call sat OUTSIDE, so a
     // NON_FILE_SCHEME/MALFORMED/BAD_ENCODING throw escaped the keep-last-good handler and
     // only the outer .catch saw it. The inner path now owns every throw below it.
@@ -356,6 +374,7 @@ if (process.argv.includes("--stdio")) {
       // throw) sends NOTHING: the client keeps its last-good state. Same as the double-fault path.
       log(`ANALYZE_FAIL ${file}: ${(e as Error).message} — keeping last-good diagnostics`);
     }
+    } finally { inFlight.delete(uri); }
   };
   // FIX (audit:218): coalesce rapid edits — schedule, don't fire: a new didChange for the same
   // uri cancels the pending analyze so overlapping judge chains never pile up.

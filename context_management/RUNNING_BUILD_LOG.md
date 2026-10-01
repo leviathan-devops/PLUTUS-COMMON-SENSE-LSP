@@ -78,3 +78,10 @@
 - HOW: fresh qwen-code-audit scan (FAIL 0c/5h, session c8027864) → artifact JSON → TESTING_LOG verdict + F-08/F-09 + EN-13 + V-19-x + BUILD_REPORT §9.
 - EVIDENCE: dist SHA 3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155; battery 46/0/158; artifacts/sg-ocr-round19.json.
 - NEXT: the canon refresh (Phase B), then the package assembly (Phase E).
+
+## [2026-10-01T23:30] — the flaw-report fixes + the SCOPE GATE
+- WHAT: F-1 law-bearing resolution; F-2 the pull handler; F-3 ranged edits applied; F-6 didSave; F-10 tier retired (6 tokens); the isPlutusScoped gate (7/7); A37/A38/A39 pins.
+- WHY: the independent flaw report — silent where it matters, loud where it does not.
+- HOW: lawCount() scoping (local → cache → climb → known); the pull shares the analyze path; the scope gate FIRST in the pipeline.
+- EVIDENCE: battery 52/0/171; derailment 6/6; scope 7/7; pull no -32601; dashboard 564 laws.
+- NEXT: the v0.9 checkpoint (this turn).

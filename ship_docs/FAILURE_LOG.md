@@ -68,3 +68,26 @@ one subsystem re-introduces defects; the audit count is not a convergence proof.
   unbounded. The count is not convergence (FAILURE_LOG F-07 stands).
 - **Impact:** the gate stays FAIL; the fix is queued, not rushed.
 - **Disposition:** OPEN.
+
+### F-10 — the independent flaw report (2026-10-01 — an agent found this mid-other-task)
+- **What happened:** an independent agent, searching for a DIFFERENT task, hit the LSP's own
+  refusal noise and wrote `reports/PCSL_FLAW_REPORT_2026-10-01.md` (12 findings, 2 CRITICAL).
+- **Found:** by a foreign session's live probes (stdio, loadStore, census, receipts) — NOT by us.
+- **Root cause:** the reflex was built and tested against the MASTER_CONTEXT graph but DEPLOYED
+  against every tree: lawless dashboard graphs (F-1), an advertised-but-missing pull handler
+  (F-2), no didSave (F-6), a dead tier token (F-10), and a global registration with no scope gate.
+- **Impact:** the LSP was a silent no-op on its primary target (the dashboard tree) while
+  emitting noise on every foreign file — the worst combination: silent where it matters, loud
+  where it does not.
+- **Disposition:** FIXED+PROVEN this turn (F-1/F-2/F-3/F-6/F-10 + the SCOPE GATE; battery 52/0;
+  derailment suite re-run; live re-proofs). F-4 (test isolation) verified already-isolated via
+  bunfig; F-5 (silent degrade) queued; F-7/F-9/F-11/F-12 fixed inline.
+
+### F-11 — sample.ts committed twice (the untracked-debris class)
+- **What happened:** a 2-line scratch file (`export const x…`) was committed in `e8fbcc8` via
+  `git add -A` (it was untracked debris from an earlier probe), removed, then reappeared and
+  committed AGAIN — because the second `git add -A` ran while the file still existed.
+- **Root cause:** `git add -A` stages untracked scratch. Two removals were needed because the
+  file was never deleted from disk between them.
+- **Disposition:** FIXED (deleted + committed). LESSON: never `git add -A` — stage explicit
+  paths (the skill's own law, violated twice).

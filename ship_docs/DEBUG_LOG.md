@@ -122,3 +122,20 @@ LESSON: two compounding bugs — a scheduled exit AND a forbidden top-level retu
 - **THE VERIFICATION:** battery 48/0/160; derailment suite 6/6; bundle rebuilt `c624683bd9b220c1`.
 - **THE LESSON:** a reflex registered on the WRONG file types over-fires; the "no marker" and
   "marker but no store" states are DIFFERENT and must not share a card.
+
+## EN-15 — the flaw-report fixes (F-1/F-2/F-3/F-6/F-10 + the SCOPE GATE) (2026-10-01)
+- **THE FINDING:** the independent flaw report (12 findings): F-1 lawless-graph silence (dashboard
+  files resolve 0 laws); F-2 diagnosticProvider advertised but unimplemented (-32601); F-6 didSave
+  ignored; F-10 dead tier token; F-8 global registration with no scope.
+- **THE ROOT CAUSE:** the resolver returned the NEAREST kg.json whatever it contained (a symbol/file
+  graph has 0 laws → the pipeline is a silent no-op); the capability block and the dispatcher were
+  never reconciled; didSave had no branch; the token was declared, never emitted.
+- **THE FIX:** (F-1) law-bearing resolution (`lawCount>0` local → cache → ancestor climb → known
+  paths); (F-2) the pull handler implemented (same analyze path, async); (F-6) didSave schedules
+  analyze; (F-10) the dead token RETIRED (6-token set); (SCOPE) `isPlutusScoped` — a path SEGMENT
+  literally `PLUTUS` or an explicit `plutus.yaml`/`.plutus` FILE below $HOME (the first two cuts
+  were too loose: child-existence + the stale `~/.plutus/` dir — both caught by the 7-case probe).
+- **THE VERIFICATION:** battery 52/0/171; derailment 6/6; the scope probe 7/7; the pull probe
+  (`{"id":2,"result":{"kind":"full","items":[]}}`, no -32601); the dashboard file resolves 564 laws.
+- **THE LESSON:** an independent agent's live probes found what 19 audit rounds missed — the audits
+  read the code; the probes drove the RUNTIME against a different tree.

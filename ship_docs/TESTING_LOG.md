@@ -183,3 +183,14 @@ Each round: every BLOCKING finding adjudicated + fixed; every fix pinned. Batter
 - **The artifacts:** `artifacts/sg-ocr-round19.json` (session, scope, counts, blocking list, dist SHA).
 
 ## AUDIT GATE: FAIL (0 critical, 5 high) — session c8027864 — artifacts/sg-ocr-round19.json
+
+## TEST RESULT — 2026-10-01 — the flaw-report fix verification (battery + live probes)
+
+### SCRIPT + HOST (live)
+- **The run:** `PLUTUS_L1_PATH=<kg.json> bun test ./tests/` → 52 pass / 0 fail / 171 expects.
+  `bun scripts/derailment-suite.ts` → 6/6 PASS. The scope probe (`/tmp/scope-probe.ts`) → 7/7.
+  The pull probe (`/tmp/pull-probe.ts`) → `{"id":2,"result":{"kind":"full"}}`, no -32601.
+  The F-1 probe → dashboard file resolves 564 laws (was 0).
+- **The verdict:** PASS — F-1/F-2/F-3/F-6/F-10 + the SCOPE GATE all verified live.
+- **The artifacts:** the probes (`/tmp/scope-probe.ts`, `/tmp/pull-probe.ts`, `/tmp/f1-probe.ts`);
+  the battery output; the rebuilt bundle (SHA below).
