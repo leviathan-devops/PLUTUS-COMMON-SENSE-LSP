@@ -39,17 +39,23 @@ export const SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 } as con
 // markdown/HTML), so the risk is SIZE + spoofing via unbounded/control characters, not markup.
 // cap() bounds length and strips CR/LF/control chars, keeping the payload readable. A consumer
 // that DOES render markup must escape on ITS side; the server guarantees plain, bounded text.
+// FIX (audit round-14: bound every interpolated string) — store/judge strings flowed verbatim
+// into titles/rows. LSP diagnostic messages are PLAIN TEXT (editors render them as text, not
+// markdown/HTML), so the risk is SIZE + spoofing via unbounded/control characters, not markup.
+// cap() bounds length and strips CR/LF/control chars, keeping the payload readable.
+// FIX (audit round-15: cap FIRST, then srcOf) — srcOf called cap before its initialization
+// (TDZ risk if ever called at module init). cap is defined first now.
+const cap = (v: unknown, n = 240): string => {
+  const t = typeof v === "string" ? v : v === null || v === undefined ? "" : String(v);
+  const flat = t.replace(/[\r\n\t\u0000-\u001f\u007f]+/g, " ");
+  return flat.length > n ? `${flat.slice(0, n)}…` : flat;
+};
+
 // FIX (audit round-14: ONE source renderer) — trim + whitespace-only + fallback in one place
-// so LAW rows and verdict rows can never disagree (one printed blanks, the other the fallback).
+// so LAW rows and verdict rows can never disagree.
 const srcOf = (law: { anchor?: unknown }): string => {
   const a = typeof law.anchor === "string" ? law.anchor.trim() : "";
   return a.length > 0 ? cap(a, 200) : "(anchor missing)";
-};
-
-const cap = (v: unknown, n = 240): string => {
-  const t = typeof v === "string" ? v : v == null ? "" : String(v);
-  const flat = t.replace(/[\r\n\t\u0000-\u001f\u007f]+/g, " ");
-  return flat.length > n ? `${flat.slice(0, n)}…` : flat;
 };
 type Sev = (typeof SEVERITY)[keyof typeof SEVERITY];
 
@@ -156,7 +162,7 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
     return {
       shape: "STALE",
       title: `the judge is down — the canon could not be consulted [${code}]`,
-      rows: [`reason: ${cap(v.reason ?? "JEVK5_DOWN", 300)}`],
+      rows: [`reason: ${cap(raw, 300)}`],
       severity: SEVERITY.Warning,
       source: "plutus/stale",
       total: 1,
@@ -168,7 +174,7 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
       title: `INCONCLUSIVE — the judge could not reach a verdict (weakest clause ${v.weakest ?? "none"})`,
       rows: [
         `the undecided clause: ${v.weakest ?? "(no deciding clause answered)"}`,
-        `VECTOR: ${Object.entries(vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ") || "(empty)"}`,
+        `VECTOR: ${Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ") || "(empty)"}`,
       ],
       severity: SEVERITY.Hint,
       source: "plutus/suspect",
@@ -204,7 +210,9 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   const topTied = finiteTop.length > 1 && Math.abs(finiteTop[0].p - finiteTop[1].p) < EPS;
   const attributed = finiteTop.length > 0 && !topTied;
 
-  const vecStr = Object.entries(vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ");
+  // FIX (audit round-15: the vector is bounded too) — a hostile caller's huge vector made an
+  // unbounded row. Cap to 8 entries and cap each key.
+  const vecStr = Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ");
   // FIX (audit: strip file:line:col in one pass) — `src/foo.ts:10:5` must become a clean path,
   // not `src/foo.ts:10`. Windows drive paths (C:\...) survive.
   // FIX (audit round-12: anchorFile normalized) — an empty-string targetFile survived `??`
@@ -234,7 +242,7 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   // the old title rendered `VIOLATION — … (none=n/a)`: a confident breach card with NO measured
   // clause. A breach without its evidence is SUSPECT (a warning), never an Error.
   const weakScore = v.weakest ? vector[v.weakest as keyof typeof vector] : undefined;
-  const vacuous = v.weakest == null || typeof weakScore !== "number" || !Number.isFinite(weakScore);
+  const vacuous = v.weakest === null || v.weakest === undefined || typeof weakScore !== "number" || !Number.isFinite(weakScore);
   if (effKind === "VIOLATION" && v.kind === "VIOLATION" && !vacuous) {
     return {
       shape: "VIOLATION",
@@ -289,7 +297,7 @@ export function callersCard(callers: unknown): FactCard | null {
   // FIX (audit: deduped-empty is null) — [null,"  "] yielded rows=[] with total:0, violating
   // the NEVER-empty-rows invariant. Silence, not an empty card.
   if (shown.length === 0) return null;
-  const rows = shown.slice(0, 8).map((c) => `imported by ${c}`);
+  const rows = shown.slice(0, 8).map((c) => `imported by ${cap(c, 200)}`);
   if (shown.length > 8) rows.push(`… and ${shown.length - 8} more`);
   return {
     shape: "CALLERS",

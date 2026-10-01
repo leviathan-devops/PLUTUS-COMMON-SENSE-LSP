@@ -294,3 +294,31 @@ test("A30_short_read_named (round-14)", async () => {
   const store = fs.readFileSync(`${import.meta.dir}/../src/plutus-lsp/store.ts`, "utf8");
   expect(store).toContain("short read");
 });
+
+test("A31_partition_rejects_p_gt_1 (round-15 upper bound)", async () => {
+  const { partitionByRelevance } = await import("../src/plutus-lsp/judge.ts");
+  const laws = [{ id: "law::A", name: "A", statement: "s", tier: "IMMUTABLE", anchor: "a:1", source: "MC" }];
+  const part = partitionByRelevance(laws as any, [{ index: 0, lawId: "law::A", p: 5 }]);
+  expect(part.relevant.length).toBe(0);
+  expect(part.unknown.length).toBe(1);
+});
+
+test("A32_selftest_failure_halts (round-15 CRITICAL)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  // the no-chain path must exit IMMEDIATELY (halt), never schedule-and-return
+  expect(server).toContain("if (!sendChainRef) { process.exit(code); return; }");
+});
+
+test("A33_system_paths_refused (round-15 denylist)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  expect(server).toContain("SYSTEM_DENY");
+  expect(server).toContain("PATH_REFUSED");
+});
+
+test("A34_unknown_method_answered (round-15 MethodNotFound)", async () => {
+  const fs = await import("node:fs");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  expect(server).toContain("-32601");
+});

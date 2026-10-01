@@ -22,7 +22,13 @@ function validTier(v) {
   return TIERS.includes(t) ? t : "SUPERSEDED";
 }
 function resolveRoot(startFile) {
-  let dir = dirname(resolve(startFile));
+  let dir = resolve(startFile);
+  try {
+    if (!statSync(dir).isDirectory())
+      dir = dirname(dir);
+  } catch {
+    dir = dirname(dir);
+  }
   let generic = null;
   for (let i = 0;i < 12; i++) {
     for (const m of STRONG_MARKERS)
@@ -121,6 +127,8 @@ function loadStore(startFile) {
     const fd = openSync(l1Path, "r");
     try {
       const st = fstatSync(fd);
+      if (!st.isFile())
+        throw new Error(`not a regular file (mode ${st.mode.toString(8)})`);
       if (st.size === 0)
         throw new Error("0 bytes");
       if (st.size > MAX_L1_BYTES)
@@ -413,8 +421,9 @@ function setReceipt(fn) {
 }
 var JEVK5_URL_DEFAULT = "http://127.0.0.1:8090/v1/systemone";
 var JEVK5_HEALTH_DEFAULT = "http://127.0.0.1:8090/health";
-var jevk5Url = () => process.env.JEVK5_URL ?? JEVK5_URL_DEFAULT;
-var jevk5Health = () => process.env.JEVK5_HEALTH ?? JEVK5_HEALTH_DEFAULT;
+var envOr = (v, dflt) => typeof v === "string" && v.trim().length > 0 ? v.trim() : dflt;
+var jevk5Url = () => envOr(process.env.JEVK5_URL, JEVK5_URL_DEFAULT);
+var jevk5Health = () => envOr(process.env.JEVK5_HEALTH, JEVK5_HEALTH_DEFAULT);
 var CHAIN = {
   P1: { id: "P1", name: "SCOPE", q: "Is the target file inside the PLUTUS tree (a Plutus/Trident module or canon doc)?" },
   P2: { id: "P2", name: "LAW", q: "Does the supplied evidence show a governing law for this symbol?" },
@@ -425,8 +434,9 @@ var CHAIN = {
   P7: { id: "P7", name: "DRIFT", q: "Does the change contradict a prior recorded ruling or decision?" }
 };
 async function jevk5Fetch(state, questions, timeoutMs) {
+  const ms = typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 60000) : 1500;
   const ctl = new AbortController;
-  const t = setTimeout(() => ctl.abort(), timeoutMs);
+  const t = setTimeout(() => ctl.abort(), ms);
   const started = Date.now();
   try {
     const r = await fetch(jevk5Url(), {
@@ -530,7 +540,7 @@ function buildState(target, laws, hunk) {
   laws = Array.isArray(laws) ? laws.filter((l) => l && typeof l.name === "string" && typeof l.statement === "string") : [];
   const ordered = prioritizeImmutable(laws);
   const kept = ordered.slice(0, 6);
-  const lawText = kept.map((l) => `[${l.tier}] ${l.name}: ${l.statement} (anchor ${l.anchor})`).join(`
+  const lawText = kept.map((l) => `[${l.tier ?? "MUTABLE"}] ${l.name}: ${l.statement} (anchor ${l.anchor ?? "unknown"})`).join(`
 `) + (laws.length > kept.length ? `
 ... [${laws.length - kept.length} more laws truncated]` : "");
   return [
@@ -700,6 +710,7 @@ function partitionByRelevance(laws, rows) {
   const rejected = [];
   const unknown = [];
   let unmatched = 0;
+  const placed = new Set;
   for (const r of rows) {
     if (!r || typeof r !== "object") {
       unmatched++;
@@ -710,8 +721,13 @@ function partitionByRelevance(laws, rows) {
       unmatched++;
       continue;
     }
+    if (placed.has(law.id)) {
+      unmatched++;
+      continue;
+    }
+    placed.add(law.id);
     const p = r.p;
-    if (typeof p !== "number" || !Number.isFinite(p) || p < 0)
+    if (typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1)
       unknown.push(law);
     else if (p >= relevanceT())
       relevant.push(law);
@@ -737,14 +753,14 @@ var PLUTUS_LSP_TOKENS = [
   "plutus/stale"
 ];
 var SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 };
+var cap = (v, n = 240) => {
+  const t = typeof v === "string" ? v : v === null || v === undefined ? "" : String(v);
+  const flat = t.replace(/[\r\n\t\u0000-\u001f\u007f]+/g, " ");
+  return flat.length > n ? `${flat.slice(0, n)}\u2026` : flat;
+};
 var srcOf = (law) => {
   const a = typeof law.anchor === "string" ? law.anchor.trim() : "";
   return a.length > 0 ? cap(a, 200) : "(anchor missing)";
-};
-var cap = (v, n = 240) => {
-  const t = typeof v === "string" ? v : v == null ? "" : String(v);
-  const flat = t.replace(/[\r\n\t\u0000-\u001f\u007f]+/g, " ");
-  return flat.length > n ? `${flat.slice(0, n)}\u2026` : flat;
 };
 function lawCard(kept, totalCandidates, judged) {
   if (!Array.isArray(kept) || kept.length === 0)
@@ -782,7 +798,7 @@ function verdictCard(v, kept, targetFile) {
     return {
       shape: "STALE",
       title: `the judge is down \u2014 the canon could not be consulted [${code}]`,
-      rows: [`reason: ${cap(v.reason ?? "JEVK5_DOWN", 300)}`],
+      rows: [`reason: ${cap(raw, 300)}`],
       severity: SEVERITY.Warning,
       source: "plutus/stale",
       total: 1
@@ -794,7 +810,7 @@ function verdictCard(v, kept, targetFile) {
       title: `INCONCLUSIVE \u2014 the judge could not reach a verdict (weakest clause ${v.weakest ?? "none"})`,
       rows: [
         `the undecided clause: ${v.weakest ?? "(no deciding clause answered)"}`,
-        `VECTOR: ${Object.entries(vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ") || "(empty)"}`
+        `VECTOR: ${Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ") || "(empty)"}`
       ],
       severity: SEVERITY.Hint,
       source: "plutus/suspect",
@@ -813,7 +829,7 @@ function verdictCard(v, kept, targetFile) {
   const EPS = 0.01;
   const topTied = finiteTop.length > 1 && Math.abs(finiteTop[0].p - finiteTop[1].p) < EPS;
   const attributed = finiteTop.length > 0 && !topTied;
-  const vecStr = Object.entries(vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ");
+  const vecStr = Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ");
   const anchorFile = (() => {
     const strip = (v) => {
       if (typeof v !== "string")
@@ -831,7 +847,7 @@ function verdictCard(v, kept, targetFile) {
   const kindNote = known === "SUSPECT" && v.kind !== "SUSPECT" ? ` (kind ${v.kind} coerced)` : "";
   const effKind = !attributed ? "SUSPECT" : known;
   const weakScore = v.weakest ? vector[v.weakest] : undefined;
-  const vacuous = v.weakest == null || typeof weakScore !== "number" || !Number.isFinite(weakScore);
+  const vacuous = v.weakest === null || v.weakest === undefined || typeof weakScore !== "number" || !Number.isFinite(weakScore);
   if (effKind === "VIOLATION" && v.kind === "VIOLATION" && !vacuous) {
     return {
       shape: "VIOLATION",
@@ -874,7 +890,7 @@ function callersCard(callers) {
   const shown = [...new Set(clean.map((c) => c.trim()).filter((c) => c.length > 0))];
   if (shown.length === 0)
     return null;
-  const rows = shown.slice(0, 8).map((c) => `imported by ${c}`);
+  const rows = shown.slice(0, 8).map((c) => `imported by ${cap(c, 200)}`);
   if (shown.length > 8)
     rows.push(`\u2026 and ${shown.length - 8} more`);
   return {
@@ -1036,6 +1052,10 @@ var exitFlushed = (code) => {
   try {
     receiptFlush();
   } catch {}
+  if (!sendChainRef) {
+    process.exit(code);
+    return;
+  }
   let done = false;
   const finish = () => {
     if (!done) {
@@ -1044,11 +1064,6 @@ var exitFlushed = (code) => {
     }
   };
   const guard = setTimeout(finish, 1500);
-  if (typeof sendChainRef === "undefined" || !sendChainRef) {
-    clearTimeout(guard);
-    finish();
-    return;
-  }
   Promise.resolve(sendChainRef).catch(() => {}).then(() => {
     clearTimeout(guard);
     finish();
@@ -1132,6 +1147,8 @@ ${j}`);
     });
     sendChainRef = sendChain;
   };
+  const SYSTEM_DENY = /^\/(etc|proc|sys|dev|root|boot|var\/lib|usr\/bin|usr\/sbin)(\/|$)/;
+  const ALLOWED_ROOTS = (process.env.PLUTUS_ALLOWED_ROOTS ?? "").split(":").filter(Boolean);
   const fileOf = (uri) => {
     if (!/^file:/i.test(uri))
       throw new Error(`NON_FILE_SCHEME: ${uri.slice(0, 40)}`);
@@ -1149,6 +1166,10 @@ ${j}`);
       throw new Error(`NON_LOCAL_AUTHORITY: ${uri.slice(0, 60)}`);
     if (/^\/[a-zA-Z]:[\/]/.test(p))
       return p.slice(1);
+    if (SYSTEM_DENY.test(p))
+      throw new Error(`PATH_REFUSED: ${p.slice(0, 60)}`);
+    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => p === r || p.startsWith(r.endsWith("/") ? r : r + "/")))
+      throw new Error(`PATH_OUTSIDE_ROOTS: ${p.slice(0, 60)}`);
     return p;
   };
   const seq = new Map;
@@ -1225,6 +1246,11 @@ ${j}`);
 `);
       if (head < 0)
         break;
+      if (head > 4096) {
+        log(`FRAME_SKIP: header ${head} bytes exceeds 4KB \u2014 skipping`);
+        buf = buf.subarray(head + 4);
+        continue;
+      }
       const m = /Content-Length:\s*(\d+)/i.exec(buf.subarray(0, head).toString("ascii"));
       if (!m) {
         log("FRAME_SKIP: header without Content-Length");
@@ -1245,7 +1271,8 @@ ${j}`);
         break;
       }
       const body = buf.subarray(head + 4, head + 4 + n).toString("utf8");
-      buf = buf.subarray(head + 4 + n);
+      const rest = buf.subarray(head + 4 + n);
+      buf = rest.length > 0 ? Buffer.from(rest) : Buffer.alloc(0);
       let msg = null;
       try {
         msg = JSON.parse(body);
@@ -1272,6 +1299,7 @@ ${j}`);
         send({ jsonrpc: "2.0", id: msg.id, result: null });
       } else if (msg.method === "exit") {
         exitFlushed(0);
+        return;
       } else if (msg.method === "textDocument/didOpen" || msg.method === "textDocument/didChange") {
         const p = msg.params;
         const rawUri = p?.textDocument?.uri;
@@ -1302,7 +1330,11 @@ ${j}`);
           log(`PARAMS_REJECTED ${uri}: fragment text is ${typeof lastText}`);
         if (full.length === 0 && openText !== undefined && !good(openText))
           log(`PARAMS_REJECTED ${uri}: open text is ${typeof openText}`);
-        const text = full.length > 0 ? good(lastText) ? lastText : docs.get(uri) ?? "" : good(openText) ? openText : docs.get(uri) ?? "";
+        let text;
+        if (full.length > 0)
+          text = good(lastText) ? lastText : docs.get(uri) ?? "";
+        else
+          text = good(openText) ? openText : docs.get(uri) ?? "";
         if (uri) {
           docs.set(uri, text);
           scheduleAnalyze(uri);
@@ -1318,6 +1350,8 @@ ${j}`);
           pending.delete(uri);
         }
         send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: [] } });
+      } else if (msg.id !== undefined && msg.method) {
+        send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `MethodNotFound: ${msg.method}` } });
       }
     }
   });

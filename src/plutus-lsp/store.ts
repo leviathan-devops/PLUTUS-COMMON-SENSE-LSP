@@ -64,7 +64,10 @@ export function resolveRoot(startFile: string): string {
   // marker (tsconfig.json at level 0) without ever looking higher for a STRONG one
   // (.arsumbris 5 levels up), contradicting the comment. Now: walk all 12 levels collecting
   // the nearest generic, but a STRONG at ANY level wins immediately.
-  let dir = dirname(resolve(startFile));
+  // FIX (audit round-15: test the START dir too) — dirname() assumed a file; a caller passing
+  // a DIRECTORY never had a marker in that dir tested. If startFile is a dir, start there.
+  let dir = resolve(startFile);
+  try { if (!statSync(dir).isDirectory()) dir = dirname(dir); } catch { dir = dirname(dir); }
   let generic: string | null = null;
   for (let i = 0; i < 12; i++) {
     for (const m of STRONG_MARKERS) if (existsSync(join(dir, m))) return dir;
@@ -185,6 +188,10 @@ export function loadStore(startFile: string): Store {
     const fd = openSync(l1Path, "r");
     try {
       const st = fstatSync(fd);
+      // FIX (audit round-15: REGULAR FILE only) — openSync blocks on a FIFO and a device
+      // bypasses the size intent. A kg.json must be a regular file; anything else is refused
+      // BEFORE any read.
+      if (!st.isFile()) throw new Error(`not a regular file (mode ${st.mode.toString(8)})`);
       if (st.size === 0) throw new Error("0 bytes");
       if (st.size > MAX_L1_BYTES) throw new Error(`${st.size} bytes exceeds the 16MB cap`);
       const buf = Buffer.alloc(st.size);

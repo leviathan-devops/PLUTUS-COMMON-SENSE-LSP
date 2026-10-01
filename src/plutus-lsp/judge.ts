@@ -24,8 +24,11 @@ export function setReceipt(fn: (line: string) => void): void { if (typeof fn ===
 export const JEVK5_URL_DEFAULT = "http://127.0.0.1:8090/v1/systemone";
 export const JEVK5_HEALTH_DEFAULT = "http://127.0.0.1:8090/health";
 /** Read at CALL time — an env override must take effect without a reload. */
-export const jevk5Url = () => process.env.JEVK5_URL ?? JEVK5_URL_DEFAULT;
-export const jevk5Health = () => process.env.JEVK5_HEALTH ?? JEVK5_HEALTH_DEFAULT;
+// FIX (audit round-15: an EMPTY/whitespace env override falls back) — `??` kept "" so
+// fetch("") failed noisily instead of using the default. Trim + length check.
+const envOr = (v: string | undefined, dflt: string): string => (typeof v === "string" && v.trim().length > 0 ? v.trim() : dflt);
+export const jevk5Url = () => envOr(process.env.JEVK5_URL, JEVK5_URL_DEFAULT);
+export const jevk5Health = () => envOr(process.env.JEVK5_HEALTH, JEVK5_HEALTH_DEFAULT);
 
 /** The 7 chain nodes — cheapest-first; each is ONE observable binary. */
 export const CHAIN = {
@@ -58,8 +61,11 @@ export async function jevk5Fetch(
   questions: Record<string, { type: "noul"; instructions: string }>,
   timeoutMs: number,
 ): Promise<{ ok: true; value: JevAnswer } | { ok: false; reason: string }> {
+  // FIX (audit round-15: the timeout is validated) — 0/negative/NaN aborted instantly (a
+  // noisy false DOWN). A finite positive ms only; else the 1500ms default.
+  const ms = typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 60000) : 1500;
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), timeoutMs);
+  const t = setTimeout(() => ctl.abort(), ms);
   const started = Date.now();
   try {
     const r = await fetch(jevk5Url(), {
@@ -179,7 +185,9 @@ export function buildState(target: string, laws: LawEntity[], hunk: string): str
   // FIX (audit judge.ts:101): IMMUTABLE first — a truncation must not drop the governing law
   const ordered = prioritizeImmutable(laws);
   const kept = ordered.slice(0, 6);
-  const lawText = kept.map((l) => `[${l.tier}] ${l.name}: ${l.statement} (anchor ${l.anchor})`).join("\n")
+  // FIX (audit round-15: tier/anchor defaulted) — a law without them emitted `[undefined]`
+  // and `(anchor undefined)` INTO the model's evidence text. Named fallbacks.
+  const lawText = kept.map((l) => `[${l.tier ?? "MUTABLE"}] ${l.name}: ${l.statement} (anchor ${l.anchor ?? "unknown"})`).join("\n")
     + (laws.length > kept.length ? `\n... [${laws.length - kept.length} more laws truncated]` : "");
   return [
     `TARGET FILE: ${target}`,
@@ -490,6 +498,7 @@ export function partitionByRelevance(
   const rejected: Array<{ law: LawEntity; p: number }> = [];
   const unknown: LawEntity[] = [];
   let unmatched = 0;
+  const placed = new Set<string>();   // round-15: a duplicate lawId row cannot double-place
   for (const r of rows) {
     // FIX (audit: unmatched rows are COUNTED) — a stale/misordered row (wrong lawId) is still
     // never assigned, but the count surfaces in the receipt so a hallucinated judge reply
@@ -501,8 +510,12 @@ export function partitionByRelevance(
     if (!r || typeof r !== "object") { unmatched++; continue; }
     const law = byId.get((r as RelevanceRow).lawId);
     if (!law) { unmatched++; continue; }
+    if (placed.has(law.id)) { unmatched++; continue; }   // round-15: one placement per law
+    placed.add(law.id);
     const p = (r as RelevanceRow).p;
-    if (typeof p !== "number" || !Number.isFinite(p) || p < 0) unknown.push(law);
+    // FIX (audit round-15: the upper bound too) — p=5 passed `p>=relevanceT()` and became
+    // relevant (fail-open). Only a finite [0,1] partitions; anything else is UNREADABLE.
+    if (typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1) unknown.push(law);
     else if (p >= relevanceT()) relevant.push(law); else rejected.push({ law, p });
   }
   if (unmatched > 0) { try { receipt(`PARTITION unmatched=${unmatched}/${rows.length} rows (stale or hallucinated lawId)`); } catch { /* best-effort */ } }

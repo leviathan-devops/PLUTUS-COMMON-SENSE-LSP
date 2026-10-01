@@ -163,11 +163,15 @@ export async function pipeline(file: string, source: string, useJudge = true): P
 // and the last publishDiagnostics. Flush receipts, then await the chain (bounded), then exit.
 const exitFlushed = (code: number): void => {
   try { receiptFlush(); } catch { /* best-effort */ }
-  // bounded drain: never hang the exit on a wedged stdout
+  // FIX (audit round-15 CRITICAL: HALT when there is no chain) — the round-14 drain-only
+  // version SCHEDULED the exit and returned, so the selftest's failure paths FELL THROUGH
+  // (`if (!file) { exitFlushed(2); }` then readFileSync(undefined)). With no send chain (every
+  // non-stdio path) the exit is IMMEDIATE and halts. Only the stdio shutdown path (a live
+  // chain) drains, and it is the last statement in its handler.
+  if (!sendChainRef) { process.exit(code); return; }
   let done = false;
   const finish = () => { if (!done) { done = true; process.exit(code); } };
   const guard = setTimeout(finish, 1500);
-  if (typeof sendChainRef === "undefined" || !sendChainRef) { clearTimeout(guard); finish(); return; }
   Promise.resolve(sendChainRef).catch(() => {}).then(() => { clearTimeout(guard); finish(); });
 };
 // the stdio block installs its serialized write chain here so exits can drain it
@@ -230,6 +234,11 @@ if (process.argv.includes("--stdio")) {
    *  decode-then-strip), preserve a UNC authority (file://host/share), normalize a Windows
    *  drive, and decode only the path. Non-file schemes throw LOUDLY.
    */
+  // FIX (audit round-15: system paths refused) — the LSP client is the editor (trusted), but
+  // a misbehaving client must not probe the host. System dirs are refused outright; a
+  // PLUTUS_ALLOWED_ROOTS allowlist (colon-separated) confines further when set.
+  const SYSTEM_DENY = /^\/(etc|proc|sys|dev|root|boot|var\/lib|usr\/bin|usr\/sbin)(\/|$)/;
+  const ALLOWED_ROOTS = (process.env.PLUTUS_ALLOWED_ROOTS ?? "").split(":").filter(Boolean);
   const fileOf = (uri: string): string => {
     if (!/^file:/i.test(uri)) throw new Error(`NON_FILE_SCHEME: ${uri.slice(0, 40)}`);
     // FIX (audit: UNC + decode order) — split scheme/authority/path/query/fragment on the RAW
@@ -246,6 +255,8 @@ if (process.argv.includes("--stdio")) {
     // NON_FILE_SCHEME-class refusal, never a path handed to loadStore.
     if (auth && auth.toLowerCase() !== "localhost") throw new Error(`NON_LOCAL_AUTHORITY: ${uri.slice(0, 60)}`);
     if (/^\/[a-zA-Z]:[\/]/.test(p)) return p.slice(1);                      // /c:/x -> c:/x
+    if (SYSTEM_DENY.test(p)) throw new Error(`PATH_REFUSED: ${p.slice(0, 60)}`);
+    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => p === r || p.startsWith(r.endsWith("/") ? r : r + "/"))) throw new Error(`PATH_OUTSIDE_ROOTS: ${p.slice(0, 60)}`);
     return p;
   };
 
@@ -324,6 +335,9 @@ if (process.argv.includes("--stdio")) {
     for (;;) {
       const head = buf.indexOf("\r\n\r\n");
       if (head < 0) break;
+      // FIX (audit round-15: the header scan is CAPPED) — the regex ran on up to 32MB per
+      // iteration. A >4KB header block is malformed; skip it (drain past the separator).
+      if (head > 4096) { log(`FRAME_SKIP: header ${head} bytes exceeds 4KB — skipping`); buf = buf.subarray(head + 4); continue; }
       const m = /Content-Length:\s*(\d+)/i.exec(buf.subarray(0, head).toString("ascii"));
       if (!m) { log("FRAME_SKIP: header without Content-Length"); buf = buf.subarray(head + 4); continue; }
       const n = parseInt(m[1], 10);
@@ -344,7 +358,11 @@ if (process.argv.includes("--stdio")) {
         break;
       }
       const body = buf.subarray(head + 4, head + 4 + n).toString("utf8");
-      buf = buf.subarray(head + 4 + n);
+      // FIX (audit round-15: copy the remainder) — a subarray VIEW pins the whole backing
+      // ArrayBuffer (up to 32MB) for the server's life even after the logical buffer shrinks.
+      // Buffer.from copies, releasing the peak allocation.
+      const rest = buf.subarray(head + 4 + n);
+      buf = rest.length > 0 ? Buffer.from(rest) : Buffer.alloc(0);
       let msg: { id?: number; method?: string; params?: Record<string, unknown> } | null = null;
       try { msg = JSON.parse(body); } catch (e) { log(`FRAME_PARSE_FAIL: ${(e as Error).message}`); continue; }   // FIX F11
       if (!msg) continue;
@@ -371,6 +389,7 @@ if (process.argv.includes("--stdio")) {
         send({ jsonrpc: "2.0", id: msg.id, result: null });
       } else if (msg.method === "exit") {
         exitFlushed(0);
+        return;   // round-15: never fall through the drain into the frame loop
       } else if (msg.method === "textDocument/didOpen" || msg.method === "textDocument/didChange") {
         // FIX (audit scripts/plutus-lsp.ts:122 CRITICAL): didChange carries contentChanges[].text,
         // NOT textDocument.text (which only didOpen has). Applying a full-sync change here.
@@ -416,7 +435,9 @@ if (process.argv.includes("--stdio")) {
         const good = (x: unknown): x is string => typeof x === "string";
         if (full.length > 0 && !good(lastText)) log(`PARAMS_REJECTED ${uri}: fragment text is ${typeof lastText}`);
         if (full.length === 0 && openText !== undefined && !good(openText)) log(`PARAMS_REJECTED ${uri}: open text is ${typeof openText}`);
-        const text = full.length > 0 ? (good(lastText) ? lastText : docs.get(uri) ?? "") : (good(openText) ? openText : docs.get(uri) ?? "");
+        let text: string;
+        if (full.length > 0) text = good(lastText) ? lastText : docs.get(uri) ?? "";
+        else text = good(openText) ? openText : docs.get(uri) ?? "";
         if (uri) { docs.set(uri, text); scheduleAnalyze(uri); }
       } else if (msg.method === "textDocument/didClose") {
         const p = msg.params as { textDocument?: { uri?: string } } | undefined;
@@ -426,6 +447,10 @@ if (process.argv.includes("--stdio")) {
         const pend = pending.get(uri);
         if (pend) { clearTimeout(pend); pending.delete(uri); }
         send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: [] } });
+      } else if (msg.id !== undefined && msg.method) {
+        // FIX (audit round-15: unknown requests are ANSWERED) — per JSON-RPC/LSP a request
+        // (has an id) must get a response or the client hangs until timeout. MethodNotFound.
+        send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `MethodNotFound: ${msg.method}` } });
       }
     }
   });
