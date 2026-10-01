@@ -85,3 +85,11 @@
 - HOW: lawCount() scoping (local → cache → climb → known); the pull shares the analyze path; the scope gate FIRST in the pipeline.
 - EVIDENCE: battery 52/0/171; derailment 6/6; scope 7/7; pull no -32601; dashboard 564 laws.
 - NEXT: the v0.9 checkpoint (this turn).
+
+## [2026-10-01T23:55] — round-20 (7 highs + 13 mediums) + the BLOCKED r21 audit
+- WHAT: receipt rotation TRUNCATES (was growing); the checked path is RETURNED (was raw np); the
+  dirty-rerun single-flight; applyRange validates offsets; the known-paths opt-in gate; the cached
+  lawCount; JUDGE_DOWN decoupled from kept; A23's defect-encoding corrected; +10 more mediums.
+- WHY: the r20 gate FAIL (0c/7h) — every finding adjudicated + fixed.
+- EVIDENCE: battery 52/0/173; derailment 6/6 (hermetic); scope 7/7; dist a1b73cf11e88dac2.
+- THE AUDIT GATE: r21 BLOCKED (Go 403 / zen-free 429) — recorded, no ship-ready claim.

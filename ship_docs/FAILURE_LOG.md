@@ -113,3 +113,15 @@ one subsystem re-introduces defects; the audit count is not a convergence proof.
 - **Root cause:** a scope test on CHILD-EXISTENCE is a scope test on the PARENT.
 - **Disposition:** FIXED+PROVEN — the decisive test: a path SEGMENT literally `PLUTUS`, or an
   explicit `plutus.yaml`/`.plutus` FILE (`isFile()`) BELOW `$HOME`. 7/7.
+
+### F-14 — the audit lane BLOCKED at r21 (2026-10-01)
+- **What happened:** `qwen-code-audit scan` returned `BLOCKED (OCR_JSON_ABSENT)` twice; the health
+  probe returned `403 — An active OpenCode Go subscription is required to use Go models`; the
+  zen-free fallback returned `FreeUsageLimitError: Rate limit exceeded`.
+- **Found:** the r21 convergence check (after the r20 fix sweep).
+- **Root cause:** a PROVIDER outage (the Go subscription lapsed; the free lane is rate-limited).
+  Not a code verdict, not a lane wiring defect.
+- **Impact:** the r20 fixes are un-audited by the independent reader — the fixes are proven by the
+  battery + the derailment suite + the probes, NOT by the audit.
+- **Disposition:** BLOCKED — recorded with its retry condition (`artifacts/sg-ocr-round21.json`).
+  NO SHIP-READY CLAIM. The retry fires when the Go subscription is active or the free lane resets.

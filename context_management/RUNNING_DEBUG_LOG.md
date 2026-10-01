@@ -76,3 +76,13 @@
 - FIX: segment-name (`basename(dir)==="PLUTUS"`) + bounded-file (below $HOME, isFile not existsSync). 7/7.
 - LESSON: a scope test on CHILD-EXISTENCE is a scope test on the parent — the test must be the SEGMENT, not the CHILD.
 - EVIDENCE: /tmp/scope-probe.ts 7/7; A37 pins the segment rule.
+
+## [2026-10-01T23:55] — the A23 test ENCODED A DEFECT (the class worth naming)
+- SYMPTOM: A23 failed after the stopword fix.
+- ROOT CAUSE: A23 asserted `const TPs = { tp1, tp2, tp3 }` yields a candidate — the ONLY match was
+  the law-name part `CONST` matching the generic word `const`. The test asserted the BUGGY contract.
+- FIX: A23 now asserts BOTH halves: a generic word admits NOTHING; a real 3-char domain term (zfp)
+  admits its law.
+- LESSON (meta-patterns L5): "the test can encode the defect — when a test asserts the buggy
+  behavior as the contract, fixing the code fails the test. CORRECT THE TEST."
+- EVIDENCE: battery 52/0/173; /tmp/a23-debug.ts showing part=CONST stop=true.
