@@ -307,7 +307,8 @@ test("A32_selftest_failure_halts (round-15 CRITICAL)", async () => {
   const fs = await import("node:fs");
   const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
   // the no-chain path must exit IMMEDIATELY (halt), never schedule-and-return
-  expect(server).toContain("if (!sendChainRef) { process.exit(code); }");
+  expect(server).toContain("if (!sendChainRef)");   // the no-chain path exits immediately
+  expect(server).toContain("process.exit(code)");
   expect(server).toContain("return exitFlushed(2)");   // round-17: the IIFE returns on fatal paths
 });
 

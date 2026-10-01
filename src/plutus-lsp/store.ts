@@ -13,7 +13,7 @@
  * The precedent: Graph_Intelligence/scripts/gi-lsp.ts (the GI reflex, 220 L).
  */
 
-import { existsSync, statSync, openSync, fstatSync, readSync, closeSync } from "node:fs";
+import { existsSync, statSync, openSync, fstatSync, readSync, closeSync, constants as FS } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { connect } from "node:net";
 import { homedir } from "node:os";
@@ -186,13 +186,22 @@ export function loadStore(startFile: string): Store {
   let raw = "";
   // FIX (audit round-17: refuse non-regular files BEFORE open) — openSync BLOCKS on a FIFO,
   // so the post-open isFile check was too late (a planted FIFO hung the server). stat first.
+  // FIX (audit round-18: O_NONBLOCK defeats the FIFO TOCTOU) — stat-then-open races a
+  // swap-to-FIFO; openSync(path,'r') BLOCKS on a FIFO. O_NONBLOCK makes the open fail
+  // immediately (EAGAIN/ENXIO) on a FIFO/device instead of hanging the server. A regular
+  // file opens normally (O_NONBLOCK is a no-op for regular files).
   try {
-    if (!statSync(l1Path).isFile()) throw new Error("not a regular file");
+    const pre = statSync(l1Path);
+    if (!pre.isFile()) throw new Error("not a regular file");
   } catch (e) {
-    throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${(e as Error).message})`);
+    if ((e as Error).message !== "not a regular file" && !/^ENOENT/.test((e as Error).message)) {
+      throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${(e as Error).message})`);
+    }
+    if ((e as Error).message === "not a regular file") throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} is not a regular file`);
   }
   try {
-    const fd = openSync(l1Path, "r");
+    // O_RDONLY | O_NONBLOCK: a FIFO/device fails the open fast instead of blocking.
+    const fd = openSync(l1Path, FS.O_RDONLY | FS.O_NONBLOCK);
     try {
       const st = fstatSync(fd);
       // FIX (audit round-15: REGULAR FILE only) — openSync blocks on a FIFO and a device

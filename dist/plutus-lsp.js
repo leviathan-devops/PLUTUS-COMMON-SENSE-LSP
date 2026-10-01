@@ -3,11 +3,11 @@
 
 // scripts/plutus-lsp.ts
 import { readFileSync, appendFileSync, mkdirSync } from "fs";
-import { dirname as dirname2 } from "path";
+import { dirname as dirname2, resolve as resolve2 } from "path";
 import { fileURLToPath } from "url";
 
 // src/plutus-lsp/store.ts
-import { existsSync, statSync, openSync, fstatSync, readSync, closeSync } from "fs";
+import { existsSync, statSync, openSync, fstatSync, readSync, closeSync, constants as FS } from "fs";
 import { join, dirname, resolve } from "path";
 import { connect } from "net";
 import { homedir } from "os";
@@ -124,13 +124,18 @@ function loadStore(startFile) {
   }
   let raw = "";
   try {
-    if (!statSync(l1Path).isFile())
+    const pre = statSync(l1Path);
+    if (!pre.isFile())
       throw new Error("not a regular file");
   } catch (e) {
-    throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${e.message})`);
+    if (e.message !== "not a regular file" && !/^ENOENT/.test(e.message)) {
+      throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${e.message})`);
+    }
+    if (e.message === "not a regular file")
+      throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} is not a regular file`);
   }
   try {
-    const fd = openSync(l1Path, "r");
+    const fd = openSync(l1Path, FS.O_RDONLY | FS.O_NONBLOCK);
     try {
       const st = fstatSync(fd);
       if (!st.isFile())
@@ -506,6 +511,10 @@ async function health(timeoutMs = 1500) {
   }
 }
 async function chain(state, nodes = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], timeoutMs = 6000, p4Override) {
+  if (typeof state !== "string")
+    state = String(state ?? "");
+  if (!Array.isArray(nodes))
+    return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const seen = new Set;
   const deduped = nodes.filter((n) => seen.has(n) ? false : (seen.add(n), true));
   if (deduped.length === 0)
@@ -1068,20 +1077,20 @@ var exitFlushed = (code) => {
   } catch {}
   if (!sendChainRef) {
     process.exit(code);
+    return;
   }
   let done = false;
   const finish = () => {
     if (!done) {
       done = true;
+      process.exit(code);
     }
-    process.exit(code);
   };
-  const guard = setTimeout(finish, 1500);
+  const guard = setTimeout(finish, 3000);
   Promise.resolve(sendChainRef).catch(() => {}).then(() => {
     clearTimeout(guard);
     finish();
   });
-  throw new Error("exitFlushed: unreachable");
 };
 var sendChainRef = null;
 if (process.argv.includes("--selftest")) {
@@ -1182,21 +1191,7 @@ ${j}`);
       throw new Error(`NON_LOCAL_AUTHORITY: ${uri.slice(0, 60)}`);
     if (/^\/[a-zA-Z]:[\/]/.test(p))
       p = p.slice(1);
-    const abs = p.startsWith("/");
-    const out = [];
-    for (const seg of p.split(/[\/\\]/)) {
-      if (seg === "" || seg === ".")
-        continue;
-      if (seg === "..") {
-        if (out.length > 0 && out[out.length - 1] !== "..")
-          out.pop();
-        else
-          out.push("..");
-        continue;
-      }
-      out.push(seg);
-    }
-    const np = (abs ? "/" : "") + out.join("/");
+    const np = resolve2(p);
     if (SYSTEM_DENY.test(np))
       throw new Error(`PATH_REFUSED: ${np.slice(0, 60)}`);
     if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => np === r || np.startsWith(r.endsWith("/") ? r : r + "/")))

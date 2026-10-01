@@ -127,6 +127,11 @@ export async function health(timeoutMs = 1500): Promise<{ ok: boolean; reason?: 
  * The state is the EVIDENCE TEXT assembled by the caller FROM DISK (the anti-gaming core).
  */
 export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], timeoutMs = 6000, p4Override?: string): Promise<JudgeVector> {
+  // FIX (audit round-18: up-front guards) — a null/non-array `nodes` threw on nodes.filter
+  // (rejected instead of a fail-closed vector); a non-string state reached the model. Both
+  // degrade to the named empty state, like relevancePass/buildState.
+  if (typeof state !== "string") state = String(state ?? "");
+  if (!Array.isArray(nodes)) return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   // FIX (audit: empty-nodes first) — a vacuous input must not cost a network round-trip,
   // and a JUDGE_NO_NODES must never be masked as JEVK5_DOWN.
   const seen = new Set<NodeId>();

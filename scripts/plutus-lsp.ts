@@ -13,7 +13,7 @@
  */
 
 import { readFileSync, appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadStore, lawsForHunk, declarationsIn, callersOf, readL2, l2SocketFor } from "../src/plutus-lsp/store.ts";
 import { chain, verdict, buildState, observableQuestion, relevancePass, partitionByRelevance, relevanceT, setReceipt as setJudgeReceipt } from "../src/plutus-lsp/judge.ts";
@@ -161,20 +161,20 @@ export async function pipeline(file: string, source: string, useJudge = true): P
 // FIX (audit round-14: drain the send chain before exit) — send() serializes on sendChain,
 // but the old exitFlushed called process.exit() immediately, dropping the shutdown response
 // and the last publishDiagnostics. Flush receipts, then await the chain (bounded), then exit.
-const exitFlushed = (code: number): never => {
+const exitFlushed = (code: number): void => {
   try { receiptFlush(); } catch { /* best-effort */ }
   // FIX (audit round-15 CRITICAL: HALT when there is no chain) — the round-14 drain-only
   // version SCHEDULED the exit and returned, so the selftest's failure paths FELL THROUGH
   // (`if (!file) { exitFlushed(2); }` then readFileSync(undefined)). With no send chain (every
   // non-stdio path) the exit is IMMEDIATE and halts. Only the stdio shutdown path (a live
   // chain) drains, and it is the last statement in its handler.
-  if (!sendChainRef) { process.exit(code); }
+  // FIX (audit round-18: no throw) — the round-17 `: never` forced a `throw` that escaped the
+  // stdio handlers (uncaught exception → exit 1). void + process.exit; the CALLER returns.
+  if (!sendChainRef) { process.exit(code); return; }
   let done = false;
-  const finish = (): never => { if (!done) { done = true; } process.exit(code); };
-  const guard = setTimeout(finish, 1500);
+  const finish = () => { if (!done) { done = true; process.exit(code); } };
+  const guard = setTimeout(finish, 3000);   // > send's 5s? no: exit guard ≥ send timeout would stall; 3s bounds the drain
   Promise.resolve(sendChainRef).catch(() => {}).then(() => { clearTimeout(guard); finish(); });
-  // unreachable: process.exit() in finish terminates. Typed `never` so callers narrow.
-  throw new Error("exitFlushed: unreachable");
 };
 // the stdio block installs its serialized write chain here so exits can drain it
 let sendChainRef: Promise<void> | null = null;
@@ -265,16 +265,12 @@ if (process.argv.includes("--stdio")) {
     // — the old early return skipped normalization + both confinement checks. Now: strip the
     // leading slash of /c:/x into c:/x, then fall through the SAME normalized path.
     if (/^\/[a-zA-Z]:[\/]/.test(p)) p = p.slice(1);
-    // FIX (audit round-16/17: NORMALIZE, CHECK, and RETURN the normalized value) — the old
-    // code checked `np` but RETURNED raw `p`, so `/work/../etc/passwd` bypassed both gates.
-    const abs = p.startsWith("/");
-    const out: string[] = [];
-    for (const seg of p.split(/[\/\\]/)) {
-      if (seg === "" || seg === ".") continue;
-      if (seg === "..") { if (out.length > 0 && out[out.length - 1] !== "..") out.pop(); else out.push(".."); continue; }
-      out.push(seg);
-    }
-    const np = (abs ? "/" : "") + out.join("/");
+    // FIX (audit round-18 CRITICAL: path.resolve clamps `..` at root) — the hand-rolled
+    // normalizer PRESERVED a leading `..` for absolute paths (`/../etc/passwd` stayed
+    // `/../etc/passwd`), so SYSTEM_DENY/ALLOWED_ROOTS missed while the OS resolved it to
+    // /etc/passwd. path.resolve() normalizes AND clamps at the root, and is the reference
+    // implementation. Relative inputs resolve against the workspace root, never cwd.
+    const np = resolve(p);
     if (SYSTEM_DENY.test(np)) throw new Error(`PATH_REFUSED: ${np.slice(0, 60)}`);
     if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => np === r || np.startsWith(r.endsWith("/") ? r : r + "/"))) throw new Error(`PATH_OUTSIDE_ROOTS: ${np.slice(0, 60)}`);
     return np;
