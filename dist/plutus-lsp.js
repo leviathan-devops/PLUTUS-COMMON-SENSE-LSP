@@ -40,8 +40,8 @@ function resolveRoot(startFile) {
   throw new Error(`${PLUTUS_NO_ROOT}: no root marker (${ROOT_MARKERS.join(" | ")}) above ${startFile}`);
 }
 var KNOWN_L1_PATHS = Object.freeze([
-  "/home/leviathan/.omp/wt/plutus-main-66dfa4c/PLUTUS/agent/.omp/graph-intelligence/layers/semantica/kg.json",
-  "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json"
+  ".omp/wt/plutus-main-66dfa4c/PLUTUS/agent/.omp/graph-intelligence/layers/semantica/kg.json",
+  "JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json"
 ]);
 var L1_RESOLVED = new Map;
 function head4(p) {
@@ -88,7 +88,7 @@ function l1PathFor(root) {
   }
   if (process.env.PLUTUS_ALLOW_KNOWN_PATHS === "1") {
     for (const rel of KNOWN_L1_PATHS) {
-      const known = resolve(rel);
+      const known = resolve(homedir(), rel);
       try {
         const st = statSync(known);
         if (st.isFile()) {
@@ -334,11 +334,12 @@ function lawsForFile(store, filePath, decls) {
   return out;
 }
 function lawsForHunk(store, filePath, decls, hunk, topK = 3) {
+  topK = typeof topK === "number" && Number.isFinite(topK) ? Math.max(1, Math.floor(topK)) : 3;
   const byName = lawsForFile(store, filePath, decls);
   const hunkTokens = new Set(tokensOf(hunk));
   const hunkLower = hunk.toLowerCase();
   const byHunk = store.laws.filter((l) => {
-    const lt = tokensOf(`${l.name} ${l.tier} ${l.statement}`);
+    const lt = tokensOf(`${l.name} ${l.statement}`);
     if (lt.some((t) => hunkTokens.has(t)))
       return true;
     for (const part of String(l.name).split(/[-_\s]+/)) {
@@ -348,19 +349,23 @@ function lawsForHunk(store, filePath, decls, hunk, topK = 3) {
     return false;
   });
   const seen = new Set;
+  const hunkLower2 = hunk.toLowerCase();
+  const namePartHit = (l) => String(l.name).split(/[-_\s]+/).some((part) => part.length >= 3 && wordRe(part.toLowerCase()).test(hunkLower2));
   const ranked = [...byName, ...byHunk].filter((l) => {
     if (seen.has(l.id))
       return false;
     seen.add(l.id);
-    return tokensOf(`${l.name} ${l.id} ${l.statement}`).some((t) => hunkTokens.has(t));
+    return tokensOf(`${l.name} ${l.id} ${l.statement}`).some((t) => hunkTokens.has(t)) || namePartHit(l);
   });
   const lawToks = new Map(ranked.map((l) => [l.id, new Set(tokensOf(`${l.name} ${l.id} ${l.statement}`))]));
   const scored = ranked.map((l) => {
     const lt = lawToks.get(l.id) ?? new Set;
     const overlap = [...lt].filter((t) => hunkTokens.has(t)).length;
-    return { l, score: overlap * 2 };
+    const shortHit = namePartHit(l) ? 1 : 0;
+    return { l, score: overlap * 2 + shortHit };
   });
-  const w = (t) => t === "IMMUTABLE" ? 2 : t === "EVOLVING" ? 1 : -2;
+  const TIER_W = { IMMUTABLE: 2, EVOLVING: 1 };
+  const w = (t) => TIER_W[t] ?? -2;
   return scored.filter((x) => x.score > 0).sort((a, b) => b.score + w(b.l.tier) - (a.score + w(a.l.tier))).slice(0, topK).map((x) => x.l);
 }
 function callersOf(store, filePath) {
@@ -381,7 +386,8 @@ function callersOf(store, filePath) {
 // src/plutus-lsp/judge.ts
 var receipt = () => {};
 function setReceipt(fn) {
-  receipt = fn;
+  if (typeof fn === "function")
+    receipt = fn;
 }
 var JEVK5_URL_DEFAULT = "http://127.0.0.1:8090/v1/systemone";
 var JEVK5_HEALTH_DEFAULT = "http://127.0.0.1:8090/health";
@@ -423,7 +429,8 @@ async function jevk5Fetch(state, questions, timeoutMs) {
       if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1)
         answers[k] = v;
     }
-    return { ok: true, value: { answers, requests: 1, latencyMs: j.latency_ms ?? Date.now() - started } };
+    const lat = j.latency_ms;
+    return { ok: true, value: { answers, requests: 1, latencyMs: typeof lat === "number" && Number.isFinite(lat) ? lat : Date.now() - started } };
   } catch (e) {
     return { ok: false, reason: `${JEVK5_DOWN}: ${e instanceof Error ? e.message : String(e)}` };
   } finally {
@@ -465,6 +472,8 @@ async function chain(state, nodes = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], 
   const invalid = deduped.filter((id) => !Object.hasOwn(CHAIN, id));
   if (invalid.length > 0)
     receipt(`CHAIN invalid NodeId(s): ${invalid.join(",")} \u2014 filtered, never judged`);
+  if (valid.length + invalid.length < nodes.length)
+    receipt(`CHAIN deduped ${nodes.length} \u2192 ${valid.length + invalid.length} (duplicates collapsed)`);
   if (valid.length === 0)
     return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const questions = {};
@@ -515,9 +524,14 @@ var demandT = () => bar(process.env.PLUTUS_DEMAND_T, 0.3);
 var relevanceT = () => bar(process.env.PLUTUS_RELEVANCE_T, 0.3);
 var DECIDING = ["P4", "P5", "P6"];
 function verdict(v) {
-  if (!v.ok)
-    return { kind: "JUDGE_DOWN", weakest: null, vector: {}, reason: v.reason };
-  const a = v.answers;
+  if (!v || typeof v !== "object" || !v.ok)
+    return { kind: "JUDGE_DOWN", weakest: null, vector: {}, reason: v?.reason };
+  const raw = v.answers && typeof v.answers === "object" && !Array.isArray(v.answers) ? v.answers : {};
+  const a = {};
+  for (const [k, n] of Object.entries(raw)) {
+    if (Object.hasOwn(CHAIN, k) && typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1)
+      a[k] = n;
+  }
   if (a.P2 === undefined || a.P2 < demandT())
     return { kind: "INCONCLUSIVE", weakest: "P2", vector: a };
   const answered = DECIDING.filter((id) => a[id] !== undefined);
@@ -578,13 +592,14 @@ function observableQuestion(laws) {
   return best?.q ?? CHAIN.P4.q;
 }
 async function relevancePass(laws, filePath, hunk, timeoutMs = 20000) {
-  if (laws.length === 0)
+  if (!Array.isArray(laws) || laws.length === 0)
     return { ok: true, scored: [], requests: 0, judged: 0, total: 0, dropped: 0 };
   const h = await health();
   if (!h.ok)
     return { ok: false, scored: [], reason: h.reason, requests: 0, judged: 0, total: laws.length, dropped: 0 };
   const CAPPED = 12;
-  const ordered = [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
+  const sane = laws.filter((l) => l && typeof l.id === "string" && typeof l.name === "string" && typeof l.statement === "string");
+  const ordered = [...sane].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
   const judged = ordered.slice(0, CAPPED);
   const dropped = laws.length - judged.length;
   if (typeof filePath !== "string" || filePath.length === 0)
@@ -624,6 +639,11 @@ async function relevancePass(laws, filePath, hunk, timeoutMs = 20000) {
   return { ok: true, scored, requests: 1, latencyMs: res.value.latencyMs, judged: judged.length, total: laws.length, dropped };
 }
 function partitionByRelevance(laws, rows) {
+  if (!Array.isArray(laws))
+    laws = [];
+  if (!Array.isArray(rows))
+    rows = [];
+  laws = laws.filter((l) => l && typeof l.id === "string");
   const byId = new Map(laws.map((l) => [l.id, l]));
   const relevant = [];
   const rejected = [];
@@ -659,14 +679,15 @@ var PLUTUS_LSP_TOKENS = [
 ];
 var SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 };
 function lawCard(kept, totalCandidates, judged) {
-  if (!kept || kept.length === 0)
+  if (!Array.isArray(kept) || kept.length === 0)
     return [];
   const clean = kept.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string");
+  const tot = typeof totalCandidates === "number" && Number.isFinite(totalCandidates) && totalCandidates >= 0 ? Math.floor(totalCandidates) : 0;
   const n = clean.length;
   return clean.map(({ law, p }) => {
     const measured = typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     const prob = measured ? `relevance ${p.toFixed(2)}` : "relevance unread";
-    const of = totalCandidates > n ? ` \xB7 kept ${n} of ${totalCandidates} candidates` : "";
+    const of = tot > n ? ` \xB7 kept ${n} of ${tot} candidates` : "";
     return {
       shape: "LAW",
       title: `${law.name} \u2014 governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
@@ -688,7 +709,8 @@ function verdictCard(v, kept, targetFile) {
   const vector = v.vector && typeof v.vector === "object" && !Array.isArray(v.vector) ? v.vector : {};
   const pct = (n) => typeof n === "number" && Number.isFinite(n) ? n.toFixed(3) : "n/a";
   if (v.kind === "JUDGE_DOWN") {
-    const code = (typeof v.reason === "string" && v.reason.length > 0 ? v.reason : "JEVK5_DOWN").split(":")[0];
+    const raw = typeof v.reason === "string" && v.reason.length > 0 ? v.reason : "JEVK5_DOWN";
+    const code = /^(PLUTUS_NO_[A-Z]+|JEVK5_DOWN|[A-Z0-9_]+)/.exec(raw)?.[1]?.slice(0, 32) ?? "JEVK5_DOWN";
     return {
       shape: "STALE",
       title: `the judge is down \u2014 the canon could not be consulted [${code}]`,
@@ -713,16 +735,26 @@ function verdictCard(v, kept, targetFile) {
   }
   if (v.kind === "LAW")
     return null;
-  const scored = kept.filter((k) => k && k.law && typeof k.p === "number");
+  const keptArr = Array.isArray(kept) ? kept : [];
+  const scored = keptArr.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string" && typeof k.p === "number");
   const finiteTop = scored.filter((k) => Number.isFinite(k.p) && k.p >= 0 && k.p <= 1).sort((a, b) => b.p - a.p);
-  const law = (finiteTop[0] ?? scored[0] ?? kept[0])?.law;
+  const law = (finiteTop[0] ?? scored[0] ?? keptArr[0])?.law;
   if (!law)
     return null;
   const EPS = 0.01;
   const topTied = finiteTop.length > 1 && Math.abs(finiteTop[0].p - finiteTop[1].p) < EPS;
   const attributed = finiteTop.length > 0 && !topTied;
   const vecStr = Object.entries(vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ");
-  const anchorFile = targetFile ?? law.anchor ?? "";
+  const anchorFile = (() => {
+    const t = (targetFile ?? "").trim();
+    if (t)
+      return t;
+    const a = (law.anchor ?? "").trim();
+    if (!a)
+      return "(anchor missing)";
+    const m = /^(.*?)(?::\d+(?::\d+)?)?$/.exec(a);
+    return m ? m[1] : a;
+  })();
   const known = v.kind === "VIOLATION" || v.kind === "DRIFT" ? v.kind : "SUSPECT";
   const kindNote = known === "SUSPECT" && v.kind !== "SUSPECT" ? ` (kind ${v.kind} coerced)` : "";
   const effKind = !attributed ? "SUSPECT" : known;
@@ -743,8 +775,8 @@ function verdictCard(v, kept, targetFile) {
       total: 1
     };
   }
-  if (effKind === "DRIFT" && v.kind === "DRIFT") {
-    const dc = v.weakest ?? "P7";
+  if (effKind === "DRIFT" && v.kind === "DRIFT" && !vacuous) {
+    const dc = v.weakest;
     return {
       shape: "DRIFT",
       title: `DRIFT \u2014 this change contradicts a prior decision (${dc}=${pct(vector[dc])})`,
@@ -830,16 +862,27 @@ ${card.rows.map((r) => "  " + r).join(`
 `)}`
   };
 }
-var receipt2 = (line) => {
+var receiptBuf = [];
+var receiptFlush = () => {
+  if (receiptBuf.length === 0)
+    return;
+  const batch = receiptBuf.join("");
+  receiptBuf = [];
   try {
-    appendFileSync(RECEIPT, `${new Date().toISOString()} ${clean(line)}
-`);
+    appendFileSync(RECEIPT, batch);
   } catch (e) {
     try {
       process.stderr.write(`RECEIPT_WRITE_FAIL: ${e.message}
 `);
     } catch {}
   }
+};
+setInterval(receiptFlush, 500).unref?.();
+var receipt2 = (line) => {
+  receiptBuf.push(`${new Date().toISOString()} ${clean(line)}
+`);
+  if (receiptBuf.length > 200)
+    receiptFlush();
 };
 setReceipt((line) => receipt2(line));
 var LOG = process.env.PLUTUS_LSP_LOG ?? `${FORENSIC}/lsp-stderr.log`;
@@ -1014,7 +1057,13 @@ ${j}`);
   const seq = new Map;
   const pending = new Map;
   const analyze = async (uri) => {
-    const file = fileOf(uri);
+    let file;
+    try {
+      file = fileOf(uri);
+    } catch (e) {
+      log(`ANALYZE_FAIL ${uri}: ${e.message} \u2014 keeping last-good diagnostics`);
+      return;
+    }
     const src = docs.get(uri) ?? "";
     const my = (seq.get(uri) ?? 0) + 1;
     seq.set(uri, my);
@@ -1060,6 +1109,11 @@ ${j}`);
   });
   const MAX_STDIN = 32 * 1024 * 1024;
   process.stdin.on("data", (c) => {
+    if (buf.length + c.length > MAX_STDIN + 65536) {
+      log(`STDIN_OVERSIZE_RESET: ${buf.length + c.length} bytes \u2014 resetting`);
+      buf = Buffer.alloc(0);
+      return;
+    }
     buf = Buffer.concat([buf, c]);
     if (buf.indexOf(`\r
 \r
@@ -1081,7 +1135,7 @@ ${j}`);
         continue;
       }
       const n = parseInt(m[1], 10);
-      if (!Number.isFinite(n) || n < 0 || n > 32 * 1024 * 1024) {
+      if (!Number.isFinite(n) || n < 0 || n > MAX_STDIN) {
         log(`FRAME_SKIP: malformed length at offset 0 (header=${m[1].slice(0, 24)})`);
         buf = buf.subarray(head + 4);
         continue;
@@ -1124,7 +1178,12 @@ ${j}`);
       } else if (msg.method === "textDocument/didOpen" || msg.method === "textDocument/didChange") {
         const p = msg.params;
         const uri = p?.textDocument?.uri ?? "";
-        const cc = p?.contentChanges ?? [];
+        const rawCC = p?.contentChanges;
+        if (rawCC !== undefined && !Array.isArray(rawCC)) {
+          log(`PARAMS_REJECTED ${uri}: contentChanges is ${typeof rawCC}`);
+          break;
+        }
+        const cc = Array.isArray(rawCC) ? rawCC : [];
         for (const frag of cc) {
           if (frag && typeof frag === "object" && !("text" in frag)) {
             log(`INCREMENTAL_REJECTED ${uri}: range edits unsupported (change:1 full-sync only)`);

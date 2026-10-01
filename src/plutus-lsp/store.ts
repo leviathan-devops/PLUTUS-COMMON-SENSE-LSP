@@ -86,9 +86,12 @@ export function resolveRoot(startFile: string): string {
 // silently become canon on another host. Portability comes from PLUTUS_L1_PATH + <root>/kg.json.
 // (The old `KNOWN_PATHS_ALLOWED` import-time const is gone — the gate reads the env at CALL
 // time in l1PathFor, so a mid-process export takes effect without a reload.)
+// FIX (audit round-12: no hardcoded username) — the old entries baked /home/leviathan into
+// the module (PII in the repo; a foreign host with the flag on would trust a stranger's path).
+// Entries are homedir-relative and resolved at CALL time on THIS host.
 export const KNOWN_L1_PATHS: readonly string[] = Object.freeze([
-  "/home/leviathan/.omp/wt/plutus-main-66dfa4c/PLUTUS/agent/.omp/graph-intelligence/layers/semantica/kg.json",
-  "/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json",
+  ".omp/wt/plutus-main-66dfa4c/PLUTUS/agent/.omp/graph-intelligence/layers/semantica/kg.json",
+  "JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json",
 ]);
 
 /** FIX (audit: the spec claimed L1+L2; the pipeline ran L1-only): the known-location L1
@@ -140,7 +143,8 @@ export function l1PathFor(root: string): string {
     // FIX (audit: knownAbs was UNDEFINED — ReferenceError when enabled). The entries are
     // already absolute paths; resolve() normalizes without inventing a helper.
     for (const rel of KNOWN_L1_PATHS) {
-      const known = resolve(rel);
+      // homedir-joined at CALL time: portable, no username in the module.
+      const known = resolve(homedir(), rel);
       try {
         const st = statSync(known);
         if (st.isFile()) { L1_RESOLVED.set(root, { path: known, mtimeMs: st.mtimeMs, size: st.size, head: head4(known) }); return known; }
@@ -386,6 +390,9 @@ export function lawsForFile(store: Store, filePath: string, decls: string[]): La
  * keep the top K. The L1 detect must be PRECISE, not broad.
  */
 export function lawsForHunk(store: Store, filePath: string, decls: string[], hunk: string, topK = 3): LawEntity[] {
+  // FIX (audit round-12: topK clamped) — negative/NaN/Infinity flowed into slice(0, topK):
+  // slice(0,-1) silently dropped the top hit, slice(0,NaN) returned []. Positive int only.
+  topK = typeof topK === "number" && Number.isFinite(topK) ? Math.max(1, Math.floor(topK)) : 3;
   // ★ THE CANDIDATE-NET FIX (the derailment probe, 2026-09-30): the net was built from the
   //   DECLARATION NAMES only, so a law about a construct that lives in the hunk's BODY was
   //   never a candidate — `const TPs = { tp1, tp2, tp3 }` (breaking ONE-TP) produced NOTHING,
@@ -396,8 +403,11 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
   //   the ONE-TP law ("no TP1, TP2, TP3") was never a candidate for `{ tp1, tp2, tp3 }` — a real
   //   law invisible to the detector. The law's NAME is ALSO matched as a whole word in the hunk.
   const hunkLower = hunk.toLowerCase();
+  // FIX (audit round-12: tier never creates candidacy) — including the tier word in the
+  // searchable text matched every IMMUTABLE law on any hunk containing "immutable". Tier
+  // WEIGHTS the ranking only (the +2/+1/-2 below); it never admits a candidate.
   const byHunk: LawEntity[] = store.laws.filter((l) => {
-    const lt = tokensOf(`${l.name} ${l.tier} ${l.statement}`);
+    const lt = tokensOf(`${l.name} ${l.statement}`);
     if (lt.some((t) => hunkTokens.has(t))) return true;
     for (const part of String(l.name).split(/[-_\s]+/)) {
       if (part.length >= 3 && wordRe(part.toLowerCase()).test(hunkLower)) return true;
@@ -406,13 +416,23 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
   });
   // FIX (audit: single-pass candidates) — the old code unioned, then re-filtered, then
   // re-tokenized the same strings 3x. One pass: dedupe + zero-overlap filter together.
+  // FIX (audit round-12: short-name laws SURVIVE the filter) — byHunk admits laws via 3-char
+  // name parts (TP1/ZS10), but the old zero-overlap filter + overlap*2 score (both >=4 chars
+  // only) dropped them again with score 0. A law admitted by name-part now scores >= 1.
   const seen = new Set<string>();
+  const hunkLower2 = hunk.toLowerCase();
+  // FIX (audit round-12b: the filter honors BOTH admission channels) — the old filter kept
+  // the >=4-char token-overlap gate AFTER byHunk admitted via 3-char name parts, so a
+  // short-only law (TP1/ZS10 with no long shared token) was admitted then dropped. A law
+  // passes when it overlaps on tokens OR on a 3-char name part — the same two channels.
+  const namePartHit = (l: LawEntity): boolean =>
+    String(l.name).split(/[-_\s]+/).some((part) => part.length >= 3 && wordRe(part.toLowerCase()).test(hunkLower2));
   const ranked = [...byName, ...byHunk].filter((l) => {
     if (seen.has(l.id)) return false;
     seen.add(l.id);
     // FIX (audit: zero-overlap policy) — a small noisy set previously returned UNRANKED and
     // UNFILTERED, contradicting the score>0 rule. Filter first, then topK.
-    return tokensOf(`${l.name} ${l.id} ${l.statement}`).some((t) => hunkTokens.has(t));
+    return tokensOf(`${l.name} ${l.id} ${l.statement}`).some((t) => hunkTokens.has(t)) || namePartHit(l);
   });
   // FIX (audit: single-pass tokenization) — the hunk is tokenized ONCE; each law's token set
   // is computed ONCE and reused for the overlap score below.
@@ -420,6 +440,8 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
   const scored = ranked.map((l) => {
     const lt = lawToks.get(l.id) ?? new Set<string>();
     const overlap = [...lt].filter((t) => hunkTokens.has(t)).length;
+    // a short-name-part hit (the TP1/ZS10 class) counts even when token overlap is 0
+    const shortHit = namePartHit(l) ? 1 : 0;
     // ★ THE VIOLATION-BIAS FIX (found by the derailment probe, 2026-09-30).
     //   The PREVIOUS ranking added `nums * 3` when the edit's NUMBER MATCHED the law's
     //   number. That made an edit which CONTRADICTS the constant (ZFP 45 -> 60) rank
@@ -428,12 +450,15 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
     //       the correct action (ZFP=45) produced a card
     //   The detector must be SUBJECT-MATCH ONLY. Whether the number AGREES is the
     //   JUDGE's question (P4 VIOLATE), never the detector's.
-    return { l, score: overlap * 2 };
+    return { l, score: overlap * 2 + shortHit };
   });
   // FIX (audit store.ts:220): a ZERO-overlap law is not a candidate — return [] (no arbitrary pick)
   // FIX (audit: tier-weighted ranking) — a SUPERSEDED law must never outrank canon on the
   // same overlap: IMMUTABLE +2, EVOLVING +1, SUPERSEDED -2.
-  const w = (t: string) => (t === "IMMUTABLE" ? 2 : t === "EVOLVING" ? 1 : -2);
+  // FIX (audit round-12: the weight is a NAMED map) — the nested ternary hid the fail-closed
+  // default (unknown tier → -2, sinks). A map states it; validTier() owns the same default.
+  const TIER_W: Record<string, number> = { IMMUTABLE: 2, EVOLVING: 1 };
+  const w = (t: string): number => TIER_W[t] ?? -2;
   return scored.filter((x) => x.score > 0).sort((a, b) => (b.score + w(b.l.tier)) - (a.score + w(a.l.tier))).slice(0, topK).map((x) => x.l);
 }
 

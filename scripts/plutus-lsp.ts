@@ -47,7 +47,20 @@ function toDiagnostic(card: FactCard, src: string, line = 0): Record<string, unk
   };
 }
 
-const receipt = (line: string) => { try { appendFileSync(RECEIPT, `${new Date().toISOString()} ${clean(line)}\n`); } catch (e) { try { process.stderr.write(`RECEIPT_WRITE_FAIL: ${(e as Error).message}\n`); } catch {} } };
+// FIX (audit round-12: receipts are BUFFERED, never sync per line) — the old appendFileSync
+// on every FRAME/PUBLISH/RELEVANCE/L2 line blocked the event loop under hot typing (6s judged
+// chains + 250ms debounce behind one sync write each). Lines buffer; a 500ms timer flushes
+// async. A failed flush falls back to stderr, never silent.
+let receiptBuf: string[] = [];
+const receiptFlush = () => {
+  if (receiptBuf.length === 0) return;
+  const batch = receiptBuf.join("");
+  receiptBuf = [];
+  try { appendFileSync(RECEIPT, batch); }
+  catch (e) { try { process.stderr.write(`RECEIPT_WRITE_FAIL: ${(e as Error).message}\n`); } catch {} }
+};
+setInterval(receiptFlush, 500).unref?.();
+const receipt = (line: string) => { receiptBuf.push(`${new Date().toISOString()} ${clean(line)}\n`); if (receiptBuf.length > 200) receiptFlush(); };
 setJudgeReceipt((line: string) => receipt(line));   // FIX (audit: loud library) — the judge's
 // CHAIN/PARTITION notes land in the same receipt file as the pipeline's own lines.
 
@@ -219,7 +232,12 @@ if (process.argv.includes("--stdio")) {
   const seq = new Map<string, number>();   // FIX (audit:133): the per-uri sequence guard
   const pending = new Map<string, ReturnType<typeof setTimeout>>();  // FIX (audit: debounce) — one in-flight analyze per uri
   const analyze = async (uri: string) => {
-    const file = fileOf(uri);
+    // FIX (audit round-12: fileOf INSIDE the try) — the old call sat OUTSIDE, so a
+    // NON_FILE_SCHEME/MALFORMED/BAD_ENCODING throw escaped the keep-last-good handler and
+    // only the outer .catch saw it. The inner path now owns every throw below it.
+    let file: string;
+    try { file = fileOf(uri); }
+    catch (e) { log(`ANALYZE_FAIL ${uri}: ${(e as Error).message} — keeping last-good diagnostics`); return; }
     const src = docs.get(uri) ?? "";
     const my = (seq.get(uri) ?? 0) + 1; seq.set(uri, my);
     try {   // FIX (audit:80): no unhandled rejection — a failure publishes [] and logs the reason
@@ -270,6 +288,10 @@ if (process.argv.includes("--stdio")) {
   // path). One cap for the whole stdin buffer, shared by the separator check and the frame check.
   const MAX_STDIN = 32 * 1024 * 1024;
   process.stdin.on("data", (c: Buffer) => {
+    // FIX (audit round-12: framing hardened) — the old path concat-per-chunk (O(n^2)), ran the
+    // Content-Length regex on an unbounded header, and duplicated the 32MB literal instead of
+    // MAX_STDIN. Now: an over-cap pre-check resets LOUDLY before concat; the literal is MAX_STDIN.
+    if (buf.length + c.length > MAX_STDIN + 65536) { log(`STDIN_OVERSIZE_RESET: ${buf.length + c.length} bytes — resetting`); buf = Buffer.alloc(0); return; }
     buf = Buffer.concat([buf, c]);
     // FIX (audit round-11: the headerless path is CAPPED too) — the old code only enforced
     // MAX_STDIN after a header was found. A peer streaming bytes with no separator grew buf
@@ -288,7 +310,7 @@ if (process.argv.includes("--stdio")) {
       // FIX (audit:106 + drain-first): a malformed header must not mis-slice / OOM — and the
       // cap must not silently discard a partial valid frame. Complete frames are drained
       // FIRST; only an oversize remainder with no complete frame is reset.
-      if (!Number.isFinite(n) || n < 0 || n > 32 * 1024 * 1024) {
+      if (!Number.isFinite(n) || n < 0 || n > MAX_STDIN) {
         log(`FRAME_SKIP: malformed length at offset 0 (header=${m[1].slice(0, 24)})`);
         buf = buf.subarray(head + 4); continue;
       }
@@ -340,7 +362,12 @@ if (process.argv.includes("--stdio")) {
         // FIX (audit scripts:132 + incremental validation): the server advertises full-sync
         // (change:1). A fragment WITHOUT `text` (an incremental range edit) would corrupt the
         // doc if applied blindly — LOG it and keep the last known good text instead.
-        const cc = p?.contentChanges ?? [];
+        // FIX (audit round-12: params validated) — a non-array contentChanges threw inside
+        // the stdin handler (server crash); a non-string text poisoned docs (src.split threw
+        // later); a non-string uri threw in fileOf. Garbage params are REJECTED, never stored.
+        const rawCC = (p as { contentChanges?: unknown } | undefined)?.contentChanges;
+        if (rawCC !== undefined && !Array.isArray(rawCC)) { log(`PARAMS_REJECTED ${uri}: contentChanges is ${typeof rawCC}`); break; }
+        const cc = (Array.isArray(rawCC) ? rawCC : []) as Array<{ text?: unknown; range?: unknown }>;
         for (const frag of cc) {
           if (frag && typeof frag === "object" && !("text" in frag)) {
             log(`INCREMENTAL_REJECTED ${uri}: range edits unsupported (change:1 full-sync only)`);

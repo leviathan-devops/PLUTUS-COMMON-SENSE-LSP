@@ -200,3 +200,35 @@ test("A20_headerless_stdin_capped (H11 no unbounded growth)", async () => {
   const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
   expect(server).toContain("headerless bytes");
 });
+
+test("A21_NaN_vector_is_INCONCLUSIVE (round-12 validated answers)", async () => {
+  const { verdict } = await import("../src/plutus-lsp/judge.ts");
+  // NaN P2 must not bypass jurisdiction; NaN wrongness must not fall through to LAW
+  const v = verdict({ ok: true, answers: { P2: NaN, P4: NaN }, requests: 1 } as any);
+  expect(v.kind).toBe("INCONCLUSIVE");
+});
+
+test("A22_nonarray_kept_is_silence (round-12 entry guards)", async () => {
+  const { lawCard, verdictCard, fileCards } = await import("../src/plutus-lsp/cards.ts");
+  expect(lawCard({} as any, 3, true)).toEqual([]);
+  expect(verdictCard({ kind: "SUSPECT", weakest: null, vector: {} }, {} as any)).toBeNull();
+  expect(fileCards({} as any, 0, null, [], true).length).toBe(0);
+});
+
+test("A23_short_name_law_survives_filter (round-12 TP1 class)", async () => {
+  const { loadStore, lawsForHunk, declarationsIn } = await import("../src/plutus-lsp/store.ts");
+  process.env.PLUTUS_L1_PATH = L1;
+  const store = loadStore(`${import.meta.dir}/../src/plutus-lsp/store.ts`);
+  // a hunk whose ONLY signal is a 3-char domain term must still yield a candidate
+  const cands = lawsForHunk(store, "x.ts", [], "const TPs = { tp1, tp2, tp3 };", 12);
+  expect(cands.length).toBeGreaterThan(0);
+});
+
+test("A24_topK_clamped (round-12 positive int)", async () => {
+  const { loadStore, lawsForHunk } = await import("../src/plutus-lsp/store.ts");
+  process.env.PLUTUS_L1_PATH = L1;
+  const store = loadStore(`${import.meta.dir}/../src/plutus-lsp/store.ts`);
+  const a = lawsForHunk(store, "src/plutus-lsp/cards.ts", [], "const cards = fileCards;", 3);
+  const b = lawsForHunk(store, "src/plutus-lsp/cards.ts", [], "const cards = fileCards;", NaN as any);
+  expect(b.length).toBe(a.length);   // NaN topK degrades to the default, never []
+});

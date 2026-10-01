@@ -73,18 +73,23 @@ export interface JudgedLaw {
  *               kernel's precision, shown so the agent can see the filter was narrow
  */
 export function lawCard(kept: JudgedLaw[] | null | undefined, totalCandidates: number, judged: boolean): FactCard[] {
-  if (!kept || kept.length === 0) return [];        // the anti-phantom law: silence, not a card
+  // FIX (audit round-12: non-array kept) — a non-array object (JS interop) threw on .filter
+  // and lost every card. Non-arrays are silence, never a throw.
+  if (!Array.isArray(kept) || kept.length === 0) return [];        // the anti-phantom law: silence, not a card
   // FIX (audit: per-element guards + finite 0..1) — one malformed entry must not throw and lose
   // every card; Infinity is NOT a measured probability (it rendered as "Infinity" in a title).
   const clean = kept.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string");
   // FIX (audit round-11: count what was EMITTED) — `of`/`total` used unfiltered kept.length
   // while cards came from clean: one malformed entry made the card claim a count it did not
   // emit. Both now read clean.length.
+  // FIX (audit round-12: totalCandidates validated) — NaN/negative/undefined hid `of`,
+  // Infinity rendered `kept n of Infinity candidates`. Only a finite non-negative int counts.
+  const tot = typeof totalCandidates === "number" && Number.isFinite(totalCandidates) && totalCandidates >= 0 ? Math.floor(totalCandidates) : 0;
   const n = clean.length;
   return clean.map(({ law, p }) => {
     const measured = typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     const prob = measured ? `relevance ${p.toFixed(2)}` : "relevance unread";
-    const of = totalCandidates > n ? ` · kept ${n} of ${totalCandidates} candidates` : "";
+    const of = tot > n ? ` · kept ${n} of ${tot} candidates` : "";
     return {
       shape: "LAW" as const,
       title: `${law.name} — governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
@@ -119,6 +124,8 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   const vector: Record<string, number> = (v.vector && typeof v.vector === "object" && !Array.isArray(v.vector)) ? v.vector : {};
   // FIX (audit: finite-only pct) — NaN/Infinity render as "n/a", never "NaN"/"Infinity" in a title.
   const pct = (n?: number) => (typeof n === "number" && Number.isFinite(n) ? n.toFixed(3) : "n/a");
+  // (audit round-12: STALE code allowlisted below — the machine code is PLUTUS_NO_* or
+  // JEVK5_*, never unbounded model prose.)
   if (v.kind === "JUDGE_DOWN") {
     // FIX (audit: STALE disambiguation) — two paths emit shape STALE on plutus/stale
     // (this one + staleCard for a dead graph). The reason CODE is the machine-readable
@@ -126,7 +133,8 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
     // filter on the code, never on title prose.
     // FIX (audit round-11: reason typeof guard) — a non-string reason (number/object via JS
     // interop) threw on .split and lost every card. Non-strings get the named code.
-    const code = (typeof v.reason === "string" && v.reason.length > 0 ? v.reason : "JEVK5_DOWN").split(":")[0];
+    const raw = typeof v.reason === "string" && v.reason.length > 0 ? v.reason : "JEVK5_DOWN";
+    const code = /^(PLUTUS_NO_[A-Z]+|JEVK5_DOWN|[A-Z0-9_]+)/.exec(raw)?.[1]?.slice(0, 32) ?? "JEVK5_DOWN";
     return {
       shape: "STALE",
       title: `the judge is down — the canon could not be consulted [${code}]`,
@@ -159,9 +167,12 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   // and a law whose p is Infinity/NaN was dropped from `scored`, so the fallback pick was
   // marked unattributed for the wrong reason. Every finite-or-not entry is scored; only a
   // finite 0..1 UNIQUE top is measured-attributed.
-  const scored = kept.filter((k) => k && k.law && typeof k.p === "number");
+  // FIX (audit round-12: scored checks name/statement like lawCard) — truthy k.law alone
+  // let `LAW: undefined` rows through. Same bar as the renderer.
+  const keptArr: JudgedLaw[] = Array.isArray(kept) ? kept : [];
+  const scored = keptArr.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string" && typeof k.p === "number");
   const finiteTop = scored.filter((k) => Number.isFinite(k.p) && k.p >= 0 && k.p <= 1).sort((a, b) => b.p - a.p);
-  const law = (finiteTop[0] ?? scored[0] ?? kept[0])?.law;
+  const law = (finiteTop[0] ?? scored[0] ?? keptArr[0])?.law;
   if (!law) return null;                            // no measured law → no card, never a guess
   // FIX (audit round-11: epsilon at DISPLAY precision) — 1e-9 caught exact-float ties only,
   // but titles render p.toFixed(2): 0.811 vs 0.807 displayed identically yet attributed
@@ -173,7 +184,17 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   const vecStr = Object.entries(vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ");
   // FIX (audit: strip file:line:col in one pass) — `src/foo.ts:10:5` must become a clean path,
   // not `src/foo.ts:10`. Windows drive paths (C:\...) survive.
-  const anchorFile = targetFile ?? law.anchor ?? "";
+  // FIX (audit round-12: anchorFile normalized) — an empty-string targetFile survived `??`
+  // and rendered `YOU ARE EDITING:  — …`. Trim, fall back on empty, and strip :line:col
+  // (Windows drive paths survive).
+  const anchorFile = (() => {
+    const t = (targetFile ?? "").trim();
+    if (t) return t;
+    const a = (law.anchor ?? "").trim();
+    if (!a) return "(anchor missing)";
+    const m = /^(.*?)(?::\d+(?::\d+)?)?$/.exec(a);
+    return m ? m[1] : a;
+  })();
   // FIX (audit: explicit kind gate) — an unknown kind coerces to SUSPECT LOUDLY: the row
   // names the coerced kind instead of silently casting via `as`. Only VIOLATION/DRIFT survive.
   const known = v.kind === "VIOLATION" || v.kind === "DRIFT" ? v.kind : "SUSPECT";
@@ -199,10 +220,11 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
       total: 1,
     };
   }
-  if (effKind === "DRIFT" && v.kind === "DRIFT") {
-    // FIX (audit: the clause comes from the verdict) — a hardcoded P7 misattributes when the
-    // drift fired on a different clause or the vector lacks P7 (then "P7=n/a" is the tell).
-    const dc = v.weakest ?? "P7";
+  // FIX (audit round-12: DRIFT gated like VIOLATION) — the old DRIFT emitted with weakest
+  // null / score missing (`P7=n/a`) and fell back to a hardcoded "P7". A drift without its
+  // evidence is SUSPECT, and there is no default clause — the title says so.
+  if (effKind === "DRIFT" && v.kind === "DRIFT" && !vacuous) {
+    const dc = v.weakest as string;
     return {
       shape: "DRIFT",
       title: `DRIFT — this change contradicts a prior decision (${dc}=${pct(vector[dc as keyof typeof vector])})`,

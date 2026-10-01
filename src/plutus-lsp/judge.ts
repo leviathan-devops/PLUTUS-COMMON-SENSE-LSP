@@ -17,7 +17,9 @@ export { JEVK5_DOWN } from "./store.ts";   // re-export (the judge owns the refu
 // (scripts/plutus-lsp.ts) installs its receipt writer here. Until installed, notes go nowhere
 // (a no-op), never throw. Every "loud" fix in this file routes through this hook.
 export let receipt: (line: string) => void = () => {};
-export function setReceipt(fn: (line: string) => void): void { receipt = fn; }
+// FIX (audit round-12: setReceipt guards) — setReceipt(null) made every later receipt() throw,
+// turning the loud-audit hook into a crash vector. Non-functions are ignored loudly-ish (no-op).
+export function setReceipt(fn: (line: string) => void): void { if (typeof fn === "function") receipt = fn; }
 
 export const JEVK5_URL_DEFAULT = "http://127.0.0.1:8090/v1/systemone";
 export const JEVK5_HEALTH_DEFAULT = "http://127.0.0.1:8090/health";
@@ -80,7 +82,10 @@ export async function jevk5Fetch(
       const v = (a as { noul?: unknown } | undefined)?.noul;
       if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1) answers[k] = v;
     }
-    return { ok: true, value: { answers, requests: 1, latencyMs: j.latency_ms ?? Date.now() - started } };
+    // FIX (audit round-12: latency validated) — a string/object latency_ms from a corrupt
+    // judge violated JevAnswer.latencyMs:number downstream. Non-finite → measured locally.
+    const lat = (j as { latency_ms?: unknown }).latency_ms;
+    return { ok: true, value: { answers, requests: 1, latencyMs: typeof lat === "number" && Number.isFinite(lat) ? lat : Date.now() - started } };
   } catch (e) {
     return { ok: false, reason: `${JEVK5_DOWN}: ${e instanceof Error ? e.message : String(e)}` };
   } finally { clearTimeout(t); }
@@ -129,6 +134,9 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
   const valid = deduped.filter((id) => Object.hasOwn(CHAIN, id));
   const invalid = deduped.filter((id) => !Object.hasOwn(CHAIN, id));
   if (invalid.length > 0) receipt(`CHAIN invalid NodeId(s): ${invalid.join(",")} — filtered, never judged`);
+  // FIX (audit round-12: dedupe is LOUD too) — [P4,P4,P4] silently became one vote. A quorum
+  // change the caller cannot see is a hidden contract change; receipt it.
+  if (valid.length + invalid.length < nodes.length) receipt(`CHAIN deduped ${nodes.length} → ${valid.length + invalid.length} (duplicates collapsed)`);
   if (valid.length === 0) return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const questions: Record<string, { type: "noul"; instructions: string }> = {};
   for (const id of valid) questions[id] = { type: "noul", instructions: id === "P4" && p4Override ? p4Override : CHAIN[id].q };
@@ -219,8 +227,16 @@ export interface Verdict {
  */
 export const DECIDING: NodeId[] = ["P4", "P5", "P6"];
 export function verdict(v: JudgeVector): Verdict {
-  if (!v.ok) return { kind: "JUDGE_DOWN", weakest: null, vector: {}, reason: v.reason };
-  const a = v.answers;
+  if (!v || typeof v !== "object" || !v.ok) return { kind: "JUDGE_DOWN", weakest: null, vector: {}, reason: (v as JudgeVector | null)?.reason };
+  // FIX (audit round-12: answers validated) — NaN P2 bypassed the jurisdiction gate
+  // (NaN < demandT() is false) and NaN in MAX corrupted the wrongness logic into a LAW
+  // fall-through (fail-open). Only finite [0,1] numbers are answers; anything else is
+  // UNANSWERED. A vector with no valid answers is INCONCLUSIVE, never a verdict.
+  const raw = (v.answers && typeof v.answers === "object" && !Array.isArray(v.answers)) ? v.answers as Record<string, unknown> : {};
+  const a: Partial<Record<NodeId, number>> = {};
+  for (const [k, n] of Object.entries(raw)) {
+    if ((Object.hasOwn(CHAIN, k)) && typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1) a[k as NodeId] = n;
+  }
   // THE GUARDS (informing).
   // FIX (the container S5, measured): jurisdiction comes from THE LAWS, not the model's path read.
   // A file that matched canon laws IS in-scope BY CONSTRUCTION — P1 is recorded in the vector
@@ -322,6 +338,9 @@ export function observableQuestion(laws: LawEntity[]): string {
  * Only the laws the judge marks relevant reach the violation pass.
  */
 
+// FIX (audit round-12: index is JUDGED-order) — after the IMMUTABLE-first reorder, index is
+// the position in the prioritized judged array, NOT in the caller's laws array. lawId is the
+// stable key; never resolve rows via laws[row.index].
 export interface RelevanceRow { index: number; lawId: string; p: number }
 
 /**
@@ -355,7 +374,9 @@ export async function relevancePass(
   // FIX (audit: the cap is VISIBLE) — the return carries judged/total/dropped so a caller
   // with 20 candidates sees 12 rows AND knows the tail was never judged (fail-open
   // partial-as-complete is banned).
-  if (laws.length === 0) return { ok: true, scored: [], requests: 0, judged: 0, total: 0, dropped: 0 };   // the anti-phantom law
+  // FIX (audit round-12: Array.isArray FIRST) — laws.length itself threw on null/non-array.
+  // Non-arrays degrade to the named empty state, never a throw.
+  if (!Array.isArray(laws) || laws.length === 0) return { ok: true, scored: [], requests: 0, judged: 0, total: 0, dropped: 0 };   // the anti-phantom law
   const h = await health();
   if (!h.ok) return { ok: false, scored: [], reason: h.reason, requests: 0, judged: 0, total: laws.length, dropped: 0 };
 
@@ -365,8 +386,11 @@ export async function relevancePass(
   // FIX (audit round-11: the cap is PRIORITIZED, never input-order) — the old slice kept
   // whatever order the caller passed, so a governing IMMUTABLE law at index 12+ was never
   // judged. The cap now keeps IMMUTABLE first (canon outranks), then detector order.
+  // FIX (audit round-12: sanitize BEFORE sort) — a null entry threw on .tier and a missing
+  // statement threw on .slice. Filter first, then order, then map.
   const CAPPED = 12;
-  const ordered = [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
+  const sane: LawEntity[] = laws.filter((l) => l && typeof l.id === "string" && typeof l.name === "string" && typeof l.statement === "string");
+  const ordered = [...sane].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
   const judged = ordered.slice(0, CAPPED);
   const dropped = laws.length - judged.length;
 
@@ -428,6 +452,11 @@ export function partitionByRelevance(
   laws: LawEntity[],
   rows: RelevanceRow[],
 ): RelevancePartition {
+  // FIX (audit round-12: partition inputs guarded) — a null law entry threw on l.id and a
+  // duplicate lawId silently collapsed (last-wins). Non-arrays degrade to empty partitions.
+  if (!Array.isArray(laws)) laws = [];
+  if (!Array.isArray(rows)) rows = [];
+  laws = laws.filter((l) => l && typeof l.id === "string");
   const byId = new Map(laws.map((l) => [l.id, l]));
   const relevant: LawEntity[] = [];
   const rejected: Array<{ law: LawEntity; p: number }> = [];
