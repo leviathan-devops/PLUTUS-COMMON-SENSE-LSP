@@ -2,12 +2,12 @@
 // @bun
 
 // scripts/plutus-lsp.ts
-import { readFileSync as readFileSync2, appendFileSync, mkdirSync, existsSync as existsSync2, statSync as statSync2 } from "fs";
+import { readFileSync as readFileSync2, appendFileSync, mkdirSync, existsSync as existsSync2, statSync as statSync2, realpathSync as realpathSync2 } from "fs";
 import { dirname as dirname2, resolve as resolve2 } from "path";
 import { fileURLToPath } from "url";
 
 // src/plutus-lsp/store.ts
-import { existsSync, statSync, openSync, fstatSync, readSync, closeSync, readFileSync, constants as FS } from "fs";
+import { existsSync, statSync, openSync as openSync2, fstatSync, readSync as readSync2, closeSync as closeSync2, readFileSync, realpathSync, constants as FS } from "fs";
 import { join, dirname, resolve, basename } from "path";
 import { connect } from "net";
 import { homedir } from "os";
@@ -31,6 +31,9 @@ function isPlutusScoped(startFile) {
   } catch {
     dir = dirname(dir);
   }
+  try {
+    dir = realpathSync(dir);
+  } catch {}
   for (let i = 0;i < 16; i++) {
     if (basename(dir) === "PLUTUS")
       return true;
@@ -83,7 +86,21 @@ var KNOWN_L1_PATHS = Object.freeze([
   "JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/.omp/graph-intelligence/layers/semantica/kg.json"
 ]);
 var L1_RESOLVED = new Map;
+var LAW_COUNT_CACHE = new Map;
 function lawCount(p) {
+  try {
+    const st = statSync(p);
+    const hit = LAW_COUNT_CACHE.get(p);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size)
+      return hit.laws;
+    const n = lawCountUncached(p);
+    LAW_COUNT_CACHE.set(p, { mtimeMs: st.mtimeMs, size: st.size, laws: n });
+    return n;
+  } catch {
+    return -1;
+  }
+}
+function lawCountUncached(p) {
   try {
     const d = JSON.parse(readFileSync(p, "utf8"));
     const ents = Array.isArray(d.entities) ? d.entities : [];
@@ -94,13 +111,13 @@ function lawCount(p) {
 }
 function head4(p) {
   try {
-    const fd = openSync(p, "r");
+    const fd = openSync2(p, FS.O_RDONLY | FS.O_NONBLOCK);
     try {
       const b = Buffer.alloc(4096);
-      const n = readSync(fd, b, 0, 4096, 0);
+      const n = readSync2(fd, b, 0, 4096, 0);
       return `${n}:${b.subarray(0, n).toString("base64")}`;
     } finally {
-      closeSync(fd);
+      closeSync2(fd);
     }
   } catch {
     return "";
@@ -139,10 +156,12 @@ function l1PathFor(root) {
     if (lawCount(cand) > 0)
       return remember(cand);
   }
-  for (const rel of KNOWN_L1_PATHS) {
-    const known = resolve(homedir(), rel);
-    if (lawCount(known) > 0)
-      return remember(known);
+  if (process.env.PLUTUS_ALLOW_KNOWN_PATHS === "1") {
+    for (const rel of KNOWN_L1_PATHS) {
+      const known = resolve(homedir(), rel);
+      if (lawCount(known) > 0)
+        return remember(known);
+    }
   }
   if (process.env.PLUTUS_ALLOW_KNOWN_PATHS === "1") {
     for (const rel of KNOWN_L1_PATHS) {
@@ -170,16 +189,15 @@ function loadStore(startFile) {
   try {
     const pre = statSync(l1Path);
     if (!pre.isFile())
-      throw new Error("not a regular file");
-  } catch (e) {
-    if (e.message !== "not a regular file" && !/^ENOENT/.test(e.message)) {
-      throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${e.message})`);
-    }
-    if (e.message === "not a regular file")
       throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} is not a regular file`);
+  } catch (e) {
+    const err = e;
+    if (err.code === undefined && err.message.startsWith(PLUTUS_NO_STORE))
+      throw err;
+    throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${err.code ?? err.message})`);
   }
   try {
-    const fd = openSync(l1Path, FS.O_RDONLY | FS.O_NONBLOCK);
+    const fd = openSync2(l1Path, FS.O_RDONLY | FS.O_NONBLOCK);
     try {
       const st = fstatSync(fd);
       if (!st.isFile())
@@ -191,7 +209,7 @@ function loadStore(startFile) {
       const buf = Buffer.alloc(st.size);
       let off = 0;
       while (off < st.size) {
-        const n = readSync(fd, buf, off, st.size - off, null);
+        const n = readSync2(fd, buf, off, st.size - off, null);
         if (n <= 0)
           break;
         off += n;
@@ -200,7 +218,7 @@ function loadStore(startFile) {
         throw new Error(`short read ${off}/${st.size} bytes (file changed during read)`);
       raw = buf.subarray(0, off).toString("utf8");
     } finally {
-      closeSync(fd);
+      closeSync2(fd);
     }
   } catch (e) {
     throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${e.message})`);
@@ -421,7 +439,7 @@ function lawsForHunk(store, filePath, decls, hunk, topK = 3) {
   });
   const seen = new Set;
   const hunkLower2 = hunk.toLowerCase();
-  const namePartHit = (l) => String(l.name).split(/[-_\s]+/).some((part) => part.length >= 3 && wordRe(part.toLowerCase()).test(hunkLower2));
+  const namePartHit = (l) => String(l.name).split(/[-_\s]+/).some((part) => part.length >= 3 && !isStopword(part.toLowerCase()) && wordRe(part.toLowerCase()).test(hunkLower2));
   const ranked = [...byName, ...byHunk].filter((l) => {
     if (seen.has(l.id))
       return false;
@@ -557,6 +575,8 @@ async function health(timeoutMs = 1500) {
 async function chain(state, nodes = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], timeoutMs = 6000, p4Override) {
   if (typeof state !== "string")
     state = String(state ?? "");
+  if (state.length > 4000)
+    state = state.slice(0, 4000);
   if (!Array.isArray(nodes))
     return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const seen = new Set;
@@ -775,7 +795,7 @@ function partitionByRelevance(laws, rows) {
   const relevant = [];
   const rejected = [];
   const unknown = [];
-  const bar = relevanceT();
+  const cutoff = relevanceT();
   let unmatched = 0;
   const placed = new Set;
   for (const r of rows) {
@@ -796,7 +816,7 @@ function partitionByRelevance(laws, rows) {
     const p = r.p;
     if (typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1)
       unknown.push(law);
-    else if (p >= bar)
+    else if (p >= cutoff)
       relevant.push(law);
     else
       rejected.push({ law, p });
@@ -820,7 +840,18 @@ var PLUTUS_LSP_TOKENS = [
 ];
 var SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 };
 var cap = (v, n = 240) => {
-  const t = typeof v === "string" ? v : v === null || v === undefined ? "" : String(v);
+  let t;
+  if (typeof v === "string")
+    t = v;
+  else if (v === null || v === undefined)
+    t = "";
+  else {
+    try {
+      t = String(v);
+    } catch {
+      t = "(unprintable)";
+    }
+  }
   const flat = t.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ");
   return flat.length > n ? `${flat.slice(0, n)}\u2026` : flat;
 };
@@ -834,10 +865,11 @@ function lawCard(kept, totalCandidates, judged) {
   const clean = kept.filter((k) => k && k.law && typeof k.law.name === "string" && k.law.name.trim().length > 0 && typeof k.law.statement === "string" && k.law.statement.trim().length > 0);
   const tot = typeof totalCandidates === "number" && Number.isFinite(totalCandidates) && totalCandidates >= 0 ? Math.floor(totalCandidates) : 0;
   const n = clean.length;
+  const shown = Math.min(n, 32);
   return clean.slice(0, 32).map(({ law, p }) => {
     const measured = typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     const prob = measured ? `relevance ${p.toFixed(2)}` : "relevance unread";
-    const of = tot > n ? ` \xB7 kept ${n} of ${tot} candidates` : "";
+    const of = tot > n ? ` \xB7 kept ${n} of ${tot} candidates` : "" + (n > shown ? ` \xB7 shown ${shown} of ${n}` : "");
     return {
       shape: "LAW",
       title: `${cap(law.name, 80)} \u2014 governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
@@ -854,7 +886,7 @@ function lawCard(kept, totalCandidates, judged) {
   });
 }
 function verdictCard(v, kept, targetFile) {
-  if (!v || !kept)
+  if (!v)
     return null;
   const vector = v.vector && typeof v.vector === "object" && !Array.isArray(v.vector) ? v.vector : {};
   const pct = (n) => typeof n === "number" && Number.isFinite(n) ? n.toFixed(3) : "n/a";
@@ -888,20 +920,28 @@ function verdictCard(v, kept, targetFile) {
   const keptArr = Array.isArray(kept) ? kept : [];
   const scored = keptArr.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string" && typeof k.p === "number");
   const finiteTop = scored.filter((k) => Number.isFinite(k.p) && k.p >= 0 && k.p <= 1).sort((a, b) => b.p - a.p);
-  const validLaw = (k) => !!k && typeof k.law?.name === "string" && typeof k.law?.statement === "string";
-  const law = (finiteTop.find(validLaw) ?? scored.find(validLaw) ?? keptArr.find(validLaw))?.law;
+  const validLaw = (k) => !!k && typeof k.law?.name === "string" && k.law.name.trim().length > 0 && typeof k.law?.statement === "string" && k.law.statement.trim().length > 0;
+  const top = finiteTop.find(validLaw);
+  const picked = top ?? scored.find(validLaw) ?? keptArr.find(validLaw);
+  const law = picked?.law;
   if (!law)
     return null;
   const EPS = 0.01;
   const topTied = finiteTop.length > 1 && Math.abs(finiteTop[0].p - finiteTop[1].p) < EPS;
-  const attributed = finiteTop.length > 0 && !topTied;
-  const vecStr = Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ") || "(empty)";
+  const attributed = !!top && picked === top && !topTied;
+  const vecEntries = [];
+  let vcount = 0;
+  for (const k in vector) {
+    if (vcount++ >= 8)
+      break;
+    vecEntries.push([k, vector[k]]);
+  }
+  const vecStr = vecEntries.map(([k, n]) => `${cap(k, 16)}=${pct(typeof n === "number" ? n : undefined)}`).join("  ") || "(empty)";
   const anchorFile = (() => {
     const strip = (v) => {
       if (typeof v !== "string")
         return "";
-      const m = /^(.*?)(?::\d+(?::\d+)?)?$/.exec(v.trim());
-      return m ? m[1] : v.trim();
+      return /^(.*?)(?::\d+(?::\d+)?)?$/.exec(v.trim())[1];
     };
     const t = strip(targetFile);
     if (t)
@@ -1041,12 +1081,21 @@ var receipt2 = (line) => {
 };
 try {
   if (existsSync2(RECEIPT) && statSync2(RECEIPT).size > 12 * 1024 * 1024) {
-    const keep = readFileSync2(RECEIPT, "utf8").split(`
+    const fd = openSync(RECEIPT, "r");
+    let tail = "";
+    try {
+      const size = statSync2(RECEIPT).size;
+      const start = Math.max(0, size - 256 * 1024);
+      const b = Buffer.alloc(size - start);
+      const n = readSync(fd, b, 0, b.length, start);
+      tail = b.subarray(0, Math.max(0, n)).toString("utf8").split(`
 `).slice(-2000).join(`
 `);
-    appendFileSync(RECEIPT, `
---- RECEIPT ROTATED (12MB cap) ---
-${keep}
+    } finally {
+      closeSync(fd);
+    }
+    writeFileSync(RECEIPT, `--- RECEIPT ROTATED (12MB cap) ---
+${tail}
 `);
   }
 } catch {}
@@ -1065,6 +1114,7 @@ var log = (m) => {
   }
 };
 async function pipeline(file, source, useJudge = true) {
+  let degradedCard = null;
   if (!isPlutusScoped(file)) {
     receipt2(`OUT-OF-SCOPE file=${file}`);
     return { tokens: [], cards: [], refused: null, vector: {} };
@@ -1118,11 +1168,7 @@ async function pipeline(file, source, useJudge = true) {
       all = candidates.slice(0, 3);
       judgedLaws = all.map((law) => ({ law, p: -1 }));
       receipt2(`RELEVANCE degraded=${rel.reason}`);
-      try {
-        const sc = staleCard(`JUDGE_DEGRADED: ${rel.reason} \u2014 relevance kernel bypassed (lexical top-3)`);
-        if (all.length > 0)
-          judgedLaws = all.map((law) => ({ law, p: -1 }));
-      } catch {}
+      degradedCard = staleCard(`JUDGE_DEGRADED: ${rel.reason} \u2014 relevance kernel bypassed (lexical top-3)`);
     }
   } else if (candidates.length > 0) {
     all = candidates.slice(0, 3);
@@ -1134,19 +1180,27 @@ async function pipeline(file, source, useJudge = true) {
     vector = Object.fromEntries(Object.entries(res.answers).map(([k, n]) => [k, Number(n)]));
   }
   const cards = fileCards(judgedLaws, candidates.length, v, callersOf(store, file), useJudge && relevance.length > 0, file);
+  if (degradedCard)
+    cards.unshift(degradedCard);
   const tokens = [...new Set(cards.map((c) => c.source))];
   receipt2(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
   return { tokens, cards, refused: null, vector, relevance };
 }
 function applyRange(doc, f) {
+  const ok = (n) => typeof n === "number" && Number.isFinite(n) && n >= 0;
+  const { start, end } = f.range ?? {};
+  if (!start || !end || !ok(start.line) || !ok(start.character) || !ok(end.line) || !ok(end.character) || typeof f.text !== "string")
+    return doc;
   const ls = doc.split(`
 `);
-  const sL = Math.max(0, Math.min(f.range.start.line, ls.length - 1));
-  const eL = Math.max(0, Math.min(f.range.end.line, ls.length - 1));
+  if (start.line > end.line || start.line === end.line && start.character > end.character)
+    return doc;
+  const sL = Math.min(start.line, ls.length - 1);
+  const eL = Math.min(end.line, ls.length - 1);
   const head = ls.slice(0, sL);
   const tail = ls.slice(eL + 1);
-  const prefix = (ls[sL] ?? "").slice(0, f.range.start.character);
-  const suffix = (ls[eL] ?? "").slice(f.range.end.character);
+  const prefix = (ls[sL] ?? "").slice(0, start.character);
+  const suffix = (ls[eL] ?? "").slice(end.character);
   return [...head, prefix + f.text + suffix, ...tail].join(`
 `);
 }
@@ -1165,7 +1219,7 @@ var exitFlushed = (code) => {
       process.exit(code);
     }
   };
-  const guard = setTimeout(finish, 3000);
+  const guard = setTimeout(finish, 7000);
   Promise.resolve(sendChainRef).catch(() => {}).then(() => {
     clearTimeout(guard);
     finish();
@@ -1210,6 +1264,8 @@ if (process.argv.includes("--selftest")) {
 if (process.argv.includes("--stdio")) {
   receipt2(`INIT pid=${process.pid}`);
   const docs = new Map;
+  const inFlight = new Set;
+  const dirty = new Set;
   let buf = Buffer.alloc(0);
   let sendChain = Promise.resolve();
   const send = (obj) => {
@@ -1271,48 +1327,69 @@ ${j}`);
     if (/^\/[a-zA-Z]:[\/]/.test(p))
       p = p.slice(1);
     const np = resolve2(p);
-    if (SYSTEM_DENY.test(np))
-      throw new Error(`PATH_REFUSED: ${np.slice(0, 60)}`);
-    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => np === r || np.startsWith(r.endsWith("/") ? r : r + "/")))
-      throw new Error(`PATH_OUTSIDE_ROOTS: ${np.slice(0, 60)}`);
-    return np;
+    if (!np.startsWith("/"))
+      throw new Error(`PATH_NOT_ABSOLUTE: ${np.slice(0, 60)}`);
+    let rp = np;
+    try {
+      rp = realpathSync2(np);
+    } catch {}
+    if (SYSTEM_DENY.test(rp))
+      throw new Error(`PATH_REFUSED: ${rp.slice(0, 60)}`);
+    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => rp === r || rp.startsWith(r.endsWith("/") ? r : r + "/")))
+      throw new Error(`PATH_OUTSIDE_ROOTS: ${rp.slice(0, 60)}`);
+    return rp;
   };
   const seq = new Map;
   const pending = new Map;
   const analyze = async (uri) => {
-    let file;
-    try {
-      file = fileOf(uri);
-    } catch (e) {
-      log(`ANALYZE_FAIL ${uri}: ${e.message} \u2014 keeping last-good diagnostics`);
+    if (inFlight.has(uri)) {
+      dirty.add(uri);
+      receipt2(`SKIP_INFLIGHT ${uri} (dirty \u2192 rerun)`);
       return;
     }
-    const src = docs.get(uri) ?? "";
-    const my = (seq.get(uri) ?? 0) + 1;
-    seq.set(uri, my);
+    inFlight.add(uri);
+    dirty.delete(uri);
     try {
-      let r;
+      let file;
       try {
-        r = await pipeline(file, src, true);
+        file = fileOf(uri);
       } catch (e) {
-        log(`PIPELINE_DEGRADED ${file}: ${e.message} \u2014 falling back to lexical cards`);
-        try {
-          r = await pipeline(file, src, false);
-        } catch (e2) {
-          log(`PIPELINE_DOUBLE_FAULT ${file}: ${e2.message} \u2014 keeping last-good diagnostics`);
-          return;
-        }
-      }
-      if (seq.get(uri) !== my) {
-        log(`STALE_DROP ${file} (seq ${my} < ${seq.get(uri)})`);
+        log(`ANALYZE_FAIL ${uri}: ${e.message} \u2014 keeping last-good diagnostics`);
         return;
       }
-      const hunkLine = src.split(`
+      const src = docs.get(uri) ?? "";
+      const my = (seq.get(uri) ?? 0) + 1;
+      seq.set(uri, my);
+      try {
+        let r;
+        try {
+          r = await pipeline(file, src, true);
+        } catch (e) {
+          log(`PIPELINE_DEGRADED ${file}: ${e.message} \u2014 falling back to lexical cards`);
+          try {
+            r = await pipeline(file, src, false);
+          } catch (e2) {
+            log(`PIPELINE_DOUBLE_FAULT ${file}: ${e2.message} \u2014 keeping last-good diagnostics`);
+            return;
+          }
+        }
+        if (seq.get(uri) !== my) {
+          log(`STALE_DROP ${file} (seq ${my} < ${seq.get(uri)})`);
+          return;
+        }
+        const hunkLine = src.split(`
 `).findIndex((l) => l.trim().length > 0);
-      const diags = r.cards.map((c) => toDiagnostic(c, src, hunkLine < 0 ? 0 : hunkLine));
-      send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: diags } });
-    } catch (e) {
-      log(`ANALYZE_FAIL ${file}: ${e.message} \u2014 keeping last-good diagnostics`);
+        const diags = r.cards.map((c) => toDiagnostic(c, src, hunkLine < 0 ? 0 : hunkLine));
+        send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: diags } });
+      } catch (e) {
+        log(`ANALYZE_FAIL ${file}: ${e.message} \u2014 keeping last-good diagnostics`);
+      }
+    } finally {
+      inFlight.delete(uri);
+      if (dirty.has(uri)) {
+        dirty.delete(uri);
+        scheduleAnalyze(uri);
+      }
     }
   };
   const scheduleAnalyze = (uri) => {
@@ -1457,6 +1534,11 @@ ${j}`);
           send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "InvalidParams: textDocument.uri required" } });
         } else {
           (async () => {
+            if (inFlight.has(uri)) {
+              send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: [] } });
+              return;
+            }
+            inFlight.add(uri);
             try {
               const file = fileOf(uri);
               const src = docs.get(uri) ?? "";
@@ -1464,6 +1546,8 @@ ${j}`);
               send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: r.cards.map((c) => toDiagnostic(c, src, 0)) } });
             } catch (e) {
               send({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `InternalError: ${e.message.slice(0, 200)}` } });
+            } finally {
+              inFlight.delete(uri);
             }
           })();
         }

@@ -194,3 +194,21 @@ Each round: every BLOCKING finding adjudicated + fixed; every fix pinned. Batter
 - **The verdict:** PASS — F-1/F-2/F-3/F-6/F-10 + the SCOPE GATE all verified live.
 - **The artifacts:** the probes (`/tmp/scope-probe.ts`, `/tmp/pull-probe.ts`, `/tmp/f1-probe.ts`);
   the battery output; the rebuilt bundle (SHA below).
+
+## TEST RESULT — 2026-10-01 — the r20 fix sweep + the BLOCKED r21 audit
+
+### SCRIPT + HOST
+- **The run:** `bun test ./tests/` → **52 pass / 0 fail / 173 expects**. The derailment suite →
+  **6/6 PASS (hermetic — the fixture carries its own mini-Plutus graph)**. The scope probe → 7/7.
+  The F-5 probe → the degraded card surfaces first. The boilerplate machinery → builds clean.
+- **The verdict:** PASS for every code change.
+
+### SCRIPT — audit gate (r21)
+- **The run:** `qwen-code-audit scan` ×2 + a direct health probe.
+- **The raw output:** `GATE: BLOCKED (OCR_JSON_ABSENT)`; the health probe: `POST
+  http://127.0.0.1:4097/zen/go/v1/responses: 403 Forbidden — An active OpenCode Go subscription is
+  required to use Go models`; the zen-free lane: `FreeUsageLimitError: Rate limit exceeded`.
+- **The verdict:** BLOCKED — no LLM was reached; NO verdict exists. **Never PASS.**
+- **The artifacts:** `artifacts/sg-ocr-round21.json` (the reason + the retry condition).
+
+## AUDIT GATE: BLOCKED (provider-unavailable) — artifacts/sg-ocr-round21.json

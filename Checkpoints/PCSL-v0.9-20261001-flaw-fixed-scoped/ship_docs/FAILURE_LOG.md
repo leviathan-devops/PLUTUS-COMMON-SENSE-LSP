@@ -91,3 +91,37 @@ one subsystem re-introduces defects; the audit count is not a convergence proof.
   file was never deleted from disk between them.
 - **Disposition:** FIXED (deleted + committed). LESSON: never `git add -A` — stage explicit
   paths (the skill's own law, violated twice).
+
+### F-12 — the r19 audit's 5 blocking highs + F-4/F-5 (2026-10-01)
+- **What happened:** the r19 gate FAIL (0 critical, 5 high) stood unfixed; a re-audit of the fixes
+  ALSO surfaced that F-5's first repair was a DEAD LOCAL (the card built, never surfaced) and F-4's
+  `package.json` test script used the bun FILTER trap (`bun test tests/` → 284 tests/30 files).
+- **Found:** this session's own verification (the F-5 probe returned CARD_COUNT 0; the test count
+  jumped to 284).
+- **Root cause:** (H1) `resolve()` cwd-dependent + symlink-blind; (H2) no single-flight, chains
+  stacked; (H3) `head4` plain `openSync` blocks on a FIFO; (H4) `String(v)` invokes a hostile
+  `toString`; (H5) the attribution flag read the top-of-list, not the picked law.
+- **Impact:** none shipped — the gate stayed FAIL; the defects were latent.
+- **Disposition:** FIXED+PROVEN — battery 52/0/171; derailment 6/6 (now HERMETIC: the suite carries
+  its own mini-Plutus graph, so it no longer depends on the host canon); scope probe 7/7.
+
+### F-13 — the scope gate's two loose cuts (self-inflicted, caught by the probe)
+- **What happened:** the first scope cut (`existsSync(join(dir,"PLUTUS"))`) scoped every repo under
+  `Shared_Workspace` (it HAS a PLUTUS child); the second still scoped everything under `$HOME` (a
+  stale `~/.plutus/` DIRECTORY matched the marker-file branch).
+- **Found:** the 7-case scope probe (5/7 on cut 1, still failing on cut 2).
+- **Root cause:** a scope test on CHILD-EXISTENCE is a scope test on the PARENT.
+- **Disposition:** FIXED+PROVEN — the decisive test: a path SEGMENT literally `PLUTUS`, or an
+  explicit `plutus.yaml`/`.plutus` FILE (`isFile()`) BELOW `$HOME`. 7/7.
+
+### F-14 — the audit lane BLOCKED at r21 (2026-10-01)
+- **What happened:** `qwen-code-audit scan` returned `BLOCKED (OCR_JSON_ABSENT)` twice; the health
+  probe returned `403 — An active OpenCode Go subscription is required to use Go models`; the
+  zen-free fallback returned `FreeUsageLimitError: Rate limit exceeded`.
+- **Found:** the r21 convergence check (after the r20 fix sweep).
+- **Root cause:** a PROVIDER outage (the Go subscription lapsed; the free lane is rate-limited).
+  Not a code verdict, not a lane wiring defect.
+- **Impact:** the r20 fixes are un-audited by the independent reader — the fixes are proven by the
+  battery + the derailment suite + the probes, NOT by the audit.
+- **Disposition:** BLOCKED — recorded with its retry condition (`artifacts/sg-ocr-round21.json`).
+  NO SHIP-READY CLAIM. The retry fires when the Go subscription is active or the free lane resets.

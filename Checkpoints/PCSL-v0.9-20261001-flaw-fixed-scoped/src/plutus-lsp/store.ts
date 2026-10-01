@@ -13,7 +13,7 @@
  * The precedent: Graph_Intelligence/scripts/gi-lsp.ts (the GI reflex, 220 L).
  */
 
-import { existsSync, statSync, openSync, fstatSync, readSync, closeSync, readFileSync, constants as FS } from "node:fs";
+import { existsSync, statSync, openSync, fstatSync, readSync, closeSync, readFileSync, realpathSync, constants as FS } from "node:fs";
 import { join, dirname, resolve, basename } from "node:path";
 import { connect } from "node:net";
 import { homedir } from "node:os";
@@ -79,6 +79,9 @@ export const PLUTUS_SCOPE_FILES: readonly string[] = Object.freeze(["plutus.yaml
 export function isPlutusScoped(startFile: string): boolean {
   let dir = resolve(startFile);
   try { if (!statSync(dir).isDirectory()) dir = dirname(dir); } catch { dir = dirname(dir); }
+  // FIX (round-20 M: symlink-safe) — canonicalize the START once so a symlinked dir cannot
+  // escape the scope decision (the scope tests the REAL location, not the link path).
+  try { dir = realpathSync(dir); } catch { /* not present — the resolved path stands */ }
   for (let i = 0; i < 16; i++) {
     // (a) the segment is literally PLUTUS — the unambiguous tree marker
     if (basename(dir) === "PLUTUS") return true;
@@ -154,7 +157,21 @@ const L1_RESOLVED = new Map<string, { path: string; mtimeMs: number; size: numbe
 /** F-1 FIX: the law count in a kg.json (cheap: read + count type==="law"). -1 = unreadable.
  *  The reflex is only meaningful against a LAW-BEARING graph; a symbol/file-only graph has
  *  zero laws and makes the pipeline a silent no-op. This is the scoping test. */
+// FIX (round-20 H6: the law-count is CACHED by (path, mtime, size)) — the first cut parsed the
+// whole kg.json for the local + up to 12 ancestors + the known paths on EVERY resolve,
+// blocking the event loop N times per edit. A tiny memo keyed on stat identity.
+const LAW_COUNT_CACHE = new Map<string, { mtimeMs: number; size: number; laws: number }>();
 function lawCount(p: string): number {
+  try {
+    const st = statSync(p);
+    const hit = LAW_COUNT_CACHE.get(p);
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.laws;
+    const n = lawCountUncached(p);
+    LAW_COUNT_CACHE.set(p, { mtimeMs: st.mtimeMs, size: st.size, laws: n });
+    return n;
+  } catch { return -1; }
+}
+function lawCountUncached(p: string): number {
   try {
     const d = JSON.parse(readFileSync(p, "utf8")) as { entities?: unknown };
     const ents = Array.isArray((d as { entities?: unknown[] }).entities) ? (d as { entities: unknown[] }).entities : [];
@@ -165,7 +182,9 @@ function lawCount(p: string): number {
 /** The first-4KB fingerprint of a file (the cache's content check). Absent → "". */
 function head4(p: string): string {
   try {
-    const fd = openSync(p, "r");
+    // FIX (r19 H3: the FIFO hang) — a plain openSync BLOCKS on a FIFO; the cache's content
+    // check must never hang the server. O_NONBLOCK (the same discipline loadStore got).
+    const fd = openSync(p, FS.O_RDONLY | FS.O_NONBLOCK);
     try {
       const b = Buffer.alloc(4096);
       const n = readSync(fd, b, 0, 4096, 0);
@@ -212,9 +231,14 @@ export function l1PathFor(root: string): string {
     const cand = join(dir, ".omp", "graph-intelligence", "layers", "semantica", "kg.json");
     if (lawCount(cand) > 0) return remember(cand);
   }
-  for (const rel of KNOWN_L1_PATHS) {
-    const known = resolve(homedir(), rel);
-    if (lawCount(known) > 0) return remember(known);
+  // FIX (round-20 H5: BOTH loops are opt-in) — the law-bearing loop returned a homedir corpus
+  // WITHOUT the PLUTUS_ALLOW_KNOWN_PATHS gate, contradicting the OPT-IN ONLY law above it: on a
+  // foreign host a stale ~/.omp/wt/... kg.json silently became canon.
+  if (process.env.PLUTUS_ALLOW_KNOWN_PATHS === "1") {
+    for (const rel of KNOWN_L1_PATHS) {
+      const known = resolve(homedir(), rel);
+      if (lawCount(known) > 0) return remember(known);
+    }
   }
   if (process.env.PLUTUS_ALLOW_KNOWN_PATHS === "1") {
     for (const rel of KNOWN_L1_PATHS) {
@@ -253,14 +277,16 @@ export function loadStore(startFile: string): Store {
   // swap-to-FIFO; openSync(path,'r') BLOCKS on a FIFO. O_NONBLOCK makes the open fail
   // immediately (EAGAIN/ENXIO) on a FIFO/device instead of hanging the server. A regular
   // file opens normally (O_NONBLOCK is a no-op for regular files).
+  // FIX (round-20 M: classify by ERROR CODE, never the message string) — the old branches
+  // string-matched "not a regular file"/ENOENT; a translated message or a different errno fell
+  // into the generic bucket. e.code is the contract.
   try {
     const pre = statSync(l1Path);
-    if (!pre.isFile()) throw new Error("not a regular file");
+    if (!pre.isFile()) throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} is not a regular file`);
   } catch (e) {
-    if ((e as Error).message !== "not a regular file" && !/^ENOENT/.test((e as Error).message)) {
-      throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${(e as Error).message})`);
-    }
-    if ((e as Error).message === "not a regular file") throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} is not a regular file`);
+    const err = e as NodeJS.ErrnoException;
+    if (err.code === undefined && err.message.startsWith(PLUTUS_NO_STORE)) throw err;   // our own throw
+    throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${err.code ?? err.message})`);
   }
   try {
     // O_RDONLY | O_NONBLOCK: a FIFO/device fails the open fast instead of blocking.
@@ -529,8 +555,10 @@ export function lawsForHunk(store: Store, filePath: string, decls: string[], hun
   // the >=4-char token-overlap gate AFTER byHunk admitted via 3-char name parts, so a
   // short-only law (TP1/ZS10 with no long shared token) was admitted then dropped. A law
   // passes when it overlaps on tokens OR on a 3-char name part — the same two channels.
+  // round-20 M: a 3-char part must not be a generic stopword (ONE, THE, AND, LAW…) — the
+  // short-name channel admitted noisy candidates on common words.
   const namePartHit = (l: LawEntity): boolean =>
-    String(l.name).split(/[-_\s]+/).some((part) => part.length >= 3 && wordRe(part.toLowerCase()).test(hunkLower2));
+    String(l.name).split(/[-_\s]+/).some((part) => part.length >= 3 && !isStopword(part.toLowerCase()) && wordRe(part.toLowerCase()).test(hunkLower2));
   const ranked = [...byName, ...byHunk].filter((l) => {
     if (seen.has(l.id)) return false;
     seen.add(l.id);

@@ -12,7 +12,7 @@
  * overridable via PLUTUS_LSP_RECEIPT.
  */
 
-import { readFileSync, appendFileSync, mkdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, appendFileSync, mkdirSync, existsSync, statSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadStore, lawsForHunk, declarationsIn, callersOf, readL2, l2SocketFor, isPlutusScoped } from "../src/plutus-lsp/store.ts";
@@ -60,13 +60,25 @@ const receiptFlush = () => {
   catch (e) { try { process.stderr.write(`RECEIPT_WRITE_FAIL: ${(e as Error).message}\n`); } catch {} }
 };
 setInterval(receiptFlush, 500).unref?.();
-// F-9 FIX — the receipt grew unbounded. Cap it: when the file exceeds ~12MB, truncate to the
-// last ~2000 lines once (a rotation, not a wipe).
+// F-9 FIX (round-20 H1: the rotation actually SHRINKS now) — the first cut read the whole
+// 12MB file and APPENDED the tail back to it: the size grew monotonically. Now: the tail is
+// read with a BOUNDED window (the last ~256KB), then the file is TRUNCATED (writeFileSync
+// REPLACES) so the cap holds.
 const receipt = (line: string) => { receiptBuf.push(`${new Date().toISOString()} ${clean(line)}\n`); if (receiptBuf.length > 200) receiptFlush(); };
-try { if (existsSync(RECEIPT) && statSync(RECEIPT).size > 12 * 1024 * 1024) {
-  const keep = readFileSync(RECEIPT, "utf8").split("\n").slice(-2000).join("\n");
-  appendFileSync(RECEIPT, `\n--- RECEIPT ROTATED (12MB cap) ---\n${keep}\n`);
-} } catch { /* best-effort */ }
+try {
+  if (existsSync(RECEIPT) && statSync(RECEIPT).size > 12 * 1024 * 1024) {
+    const fd = openSync(RECEIPT, "r");
+    let tail = "";
+    try {
+      const size = statSync(RECEIPT).size;
+      const start = Math.max(0, size - 256 * 1024);
+      const b = Buffer.alloc(size - start);
+      const n = readSync(fd, b, 0, b.length, start);
+      tail = b.subarray(0, Math.max(0, n)).toString("utf8").split("\n").slice(-2000).join("\n");
+    } finally { closeSync(fd); }
+    writeFileSync(RECEIPT, `--- RECEIPT ROTATED (12MB cap) ---\n${tail}\n`);
+  }
+} catch { /* best-effort */ }
 setJudgeReceipt((line: string) => receipt(line));   // FIX (audit: loud library) — the judge's
 // CHAIN/PARTITION notes land in the same receipt file as the pipeline's own lines.
 
@@ -81,6 +93,7 @@ const log = (m: string) => { try { appendFileSync(LOG, `${new Date().toISOString
 export interface PipelineResult { tokens: string[]; cards: import("../src/plutus-lsp/cards.ts").FactCard[]; refused: string | null; vector: Record<string, number>; relevance?: Array<{ lawId: string; p: number }> }
 
 export async function pipeline(file: string, source: string, useJudge = true): Promise<PipelineResult> {
+  let degradedCard: FactCard | null = null;   // F-5: the visible "kernel bypassed" card
   // THE SCOPE GATE (the operator's law: "properly scoped ... only fires when the session is
   // actively focused on plutus and not blind firing on literally everything"). A file outside
   // a Plutus-scoped tree gets NOTHING — no card, no receipt noise. The generic rootMarkers can
@@ -158,11 +171,11 @@ export async function pipeline(file: string, source: string, useJudge = true): P
       // unfiltered net — we keep the lexical top-3 and MARK the degraded mode.
       all = candidates.slice(0, 3);
       judgedLaws = all.map((law) => ({ law, p: -1 }));   // the lexical fallback, marked unread
-      // F-5 FIX — a judge failure used to degrade SILENTLY (receipt only). Emit a VISIBLE
-      // card so the agent knows the relevance kernel was bypassed (the STALE shape, coded).
+      // F-5 FIX (the dead-local repair) — the first cut built a STALE card into a local `sc`
+      // and NEVER surfaced it: the degrade stayed silent. The card now rides the normal card
+      // list (below) so the agent SEES that the relevance kernel was bypassed.
       receipt(`RELEVANCE degraded=${rel.reason}`);
-      try { const sc = staleCard(`JUDGE_DEGRADED: ${rel.reason} — relevance kernel bypassed (lexical top-3)`);
-        if (all.length > 0) judgedLaws = all.map((law) => ({ law, p: -1 })); } catch { /* best-effort */ }
+      degradedCard = staleCard(`JUDGE_DEGRADED: ${rel.reason} — relevance kernel bypassed (lexical top-3)`);
     }
   } else if (candidates.length > 0) {
     all = candidates.slice(0, 3);   // the --no-judge path (the unit tests): lexical only
@@ -177,6 +190,7 @@ export async function pipeline(file: string, source: string, useJudge = true): P
     vector = Object.fromEntries(Object.entries(res.answers).map(([k, n]) => [k, Number(n)]));
   }
   const cards = fileCards(judgedLaws, candidates.length, v, callersOf(store, file), useJudge && relevance.length > 0, file);   // FIX F4: the callers read; the warning names the TARGET file
+  if (degradedCard) cards.unshift(degradedCard);   // F-5: the degrade is VISIBLE, first
   const tokens = [...new Set(cards.map((c) => c.source))];
   receipt(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
   return { tokens, cards, refused: null, vector, relevance };
@@ -189,13 +203,21 @@ export async function pipeline(file: string, source: string, useJudge = true): P
 // and the last publishDiagnostics. Flush receipts, then await the chain (bounded), then exit.
 /** LSP range edit applied to an in-memory doc (line/char → string). */
 function applyRange(doc: string, f: { range: { start: { line: number; character: number }; end: { line: number; character: number } }; text: string }): string {
+  // FIX (round-20 H4: the offsets are VALIDATED) — the first cut clamped lines but passed the
+  // CHARACTER offsets straight to slice: a negative/NaN offset strips a suffix, NaN wipes the
+  // prefix, and a REVERSED range (start > end) overlaps head/tail — each silently corrupting
+  // the analyzed doc. Non-finite/out-of-bounds/reversed ranges are REJECTED (the doc is kept).
+  const ok = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0;
+  const { start, end } = f.range ?? {};
+  if (!start || !end || !ok(start.line) || !ok(start.character) || !ok(end.line) || !ok(end.character) || typeof f.text !== "string") return doc;
   const ls = doc.split("\n");
-  const sL = Math.max(0, Math.min(f.range.start.line, ls.length - 1));
-  const eL = Math.max(0, Math.min(f.range.end.line, ls.length - 1));
+  if (start.line > end.line || (start.line === end.line && start.character > end.character)) return doc;
+  const sL = Math.min(start.line, ls.length - 1);
+  const eL = Math.min(end.line, ls.length - 1);
   const head = ls.slice(0, sL);
   const tail = ls.slice(eL + 1);
-  const prefix = (ls[sL] ?? "").slice(0, f.range.start.character);
-  const suffix = (ls[eL] ?? "").slice(f.range.end.character);
+  const prefix = (ls[sL] ?? "").slice(0, start.character);
+  const suffix = (ls[eL] ?? "").slice(end.character);
   return [...head, prefix + f.text + suffix, ...tail].join("\n");
 }
 
@@ -211,7 +233,7 @@ const exitFlushed = (code: number): void => {
   if (!sendChainRef) { process.exit(code); return; }
   let done = false;
   const finish = () => { if (!done) { done = true; process.exit(code); } };
-  const guard = setTimeout(finish, 3000);   // > send's 5s? no: exit guard ≥ send timeout would stall; 3s bounds the drain
+  const guard = setTimeout(finish, 7000);   // round-20: >= the send timeout (5s), never truncate   // > send's 5s? no: exit guard ≥ send timeout would stall; 3s bounds the drain
   Promise.resolve(sendChainRef).catch(() => {}).then(() => { clearTimeout(guard); finish(); });
 };
 // the stdio block installs its serialized write chain here so exits can drain it
@@ -244,6 +266,12 @@ if (process.argv.includes("--selftest")) {
 if (process.argv.includes("--stdio")) {
   receipt(`INIT pid=${process.pid}`);
   const docs = new Map<string, string>();
+  // FIX (r19 H2: single-flight per uri) — rapid typing stacked 6-20s judge chains; only the
+  // LAST seq published and the CPU burned on stale work. `analyzeSeq` already drops stale
+  // PUBLISHES; this drops the stale WORK too (skip a new analyze while one is in flight for
+  // the same uri — the trailing edit re-schedules).
+  const inFlight = new Set<string>();
+  const dirty = new Set<string>();   // round-20 H3: edits that arrived during an in-flight chain
   let buf = Buffer.alloc(0);
 
   // FIX (audit: send backpressure + errors) — an unchecked stdout.write can interleave frames
@@ -309,14 +337,31 @@ if (process.argv.includes("--stdio")) {
     // /etc/passwd. path.resolve() normalizes AND clamps at the root, and is the reference
     // implementation. Relative inputs resolve against the workspace root, never cwd.
     const np = resolve(p);
-    if (SYSTEM_DENY.test(np)) throw new Error(`PATH_REFUSED: ${np.slice(0, 60)}`);
-    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => np === r || np.startsWith(r.endsWith("/") ? r : r + "/"))) throw new Error(`PATH_OUTSIDE_ROOTS: ${np.slice(0, 60)}`);
-    return np;
+    // FIX (r19 H1: symlink + cwd gaps) — resolve() is cwd-dependent for RELATIVE inputs and
+    // never follows symlinks. An LSP URI is always absolute; a symlink pointing OUT of the
+    // allowed roots passed the prefix check. realpathSync (when the path exists) closes both.
+    if (!np.startsWith("/")) throw new Error(`PATH_NOT_ABSOLUTE: ${np.slice(0, 60)}`);
+    let rp = np;
+    try { rp = realpathSync(np); } catch { /* not present yet — the prefix check stands */ }
+    if (SYSTEM_DENY.test(rp)) throw new Error(`PATH_REFUSED: ${rp.slice(0, 60)}`);
+    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => rp === r || rp.startsWith(r.endsWith("/") ? r : r + "/"))) throw new Error(`PATH_OUTSIDE_ROOTS: ${rp.slice(0, 60)}`);
+    // FIX (round-20 H2: return the CHECKED path) — the gates ran on `rp` (the realpath) but the
+    // RAW `np` was returned, so a symlink INSIDE the roots pointing outside passed the checks
+    // and the unchecked path flowed downstream. The checked path IS the returned path.
+    return rp;
   };
 
   const seq = new Map<string, number>();   // FIX (audit:133): the per-uri sequence guard
   const pending = new Map<string, ReturnType<typeof setTimeout>>();  // FIX (audit: debounce) — one in-flight analyze per uri
   const analyze = async (uri: string) => {
+    // FIX (r19 H2) — single-flight: skip while another chain is running for this uri.
+    // FIX (round-20 H3: the trailing edit RE-RUNS) — the first cut dropped the edit entirely:
+    // an edit debounced during a ~6s chain never published until the NEXT edit arrived. A
+    // dirty flag re-schedules once the in-flight chain completes.
+    if (inFlight.has(uri)) { dirty.add(uri); receipt(`SKIP_INFLIGHT ${uri} (dirty → rerun)`); return; }
+    inFlight.add(uri);
+    dirty.delete(uri);
+    try {
     // FIX (audit round-12: fileOf INSIDE the try) — the old call sat OUTSIDE, so a
     // NON_FILE_SCHEME/MALFORMED/BAD_ENCODING throw escaped the keep-last-good handler and
     // only the outer .catch saw it. The inner path now owns every throw below it.
@@ -355,6 +400,11 @@ if (process.argv.includes("--stdio")) {
       // last-good diagnostics. A transient error (fileOf throw, toDiagnostic throw, seq
       // throw) sends NOTHING: the client keeps its last-good state. Same as the double-fault path.
       log(`ANALYZE_FAIL ${file}: ${(e as Error).message} — keeping last-good diagnostics`);
+    }
+    } finally {
+      inFlight.delete(uri);
+      // round-20 H3: a trailing edit re-runs now (never silently dropped)
+      if (dirty.has(uri)) { dirty.delete(uri); scheduleAnalyze(uri); }
     }
   };
   // FIX (audit:218): coalesce rapid edits — schedule, don't fire: a new didChange for the same
@@ -511,13 +561,17 @@ if (process.argv.includes("--stdio")) {
         else {
           // the data callback is sync — the pull runs async and answers when done (same
           // debounced path as the push; the response carries the request's id).
+          // round-20 M: the pull reuses the SINGLE-FLIGHT guard (a 6s chain cannot stack)
           void (async () => {
+            if (inFlight.has(uri)) { send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: [] } }); return; }
+            inFlight.add(uri);
             try {
               const file = fileOf(uri);
               const src = docs.get(uri) ?? "";
               const r = await pipeline(file, src, true);
               send({ jsonrpc: "2.0", id: msg.id, result: { kind: "full", items: r.cards.map((c) => toDiagnostic(c, src, 0)) } });
             } catch (e) { send({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: `InternalError: ${(e as Error).message.slice(0, 200)}` } }); }
+            finally { inFlight.delete(uri); }
           })();
         }
       } else if (msg.method === "textDocument/didSave") {
