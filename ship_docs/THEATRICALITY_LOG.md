@@ -38,3 +38,24 @@ bridge and proved the live chain in-container (6/6). RE-VERIFIED: `pcsl-ct-resul
 ## THE OPERATOR-CAUGHT COUNT: 0
 No entry above was caught by the operator. The audit + the probes caught T-01..T-05. The count
 stays visible here so it cannot drift silently.
+
+## T-06 · "the audit is converging" claimed as progress (2026-10-01 · self-caught)
+WHAT: rounds 11-18 each reported a falling blocking count as if converging to clean — while the
+FIXES THEMSELVES introduced two new CRITICALs (r15, r17, r18). WHY THEATRE: a falling number
+read as headway while the code gained lines and the reviewer an unbounded supply of fresh edges.
+THE FIX: the trend is reported WITH the re-introductions named, and the honest stop is
+CONFIRMED-DEFECTS-FIXED + CRITICAL-CLASS-ELIMINATED, never "converged". RE-VERIFIED: the r18
+GATE line reads FAIL with the residual catalogued.
+
+## T-07 · "the LSP infers a violation" without the derailment suite (2026-10-01 · self-caught, then fixed)
+WHAT: through rounds 9-17 the claim "the LSP catches derailments" rested on unit tests + card
+rendering — no test ever pushed a REAL derailment through the pipeline and asserted the reflex.
+WHY THEATRE: the green battery proved the MECHANISM, never the OBJECTIVE's behavior. THE FIX:
+`scripts/derailment-suite.ts` — 6 real derailments, 6 PASS, 1 clean case silent. RE-VERIFIED:
+`.omp/derailment-suite-results.json`.
+
+## T-08 · FIFO "refused before any read" while the open still blocked (2026-10-01 · caught by r17)
+WHAT: the comment claimed a FIFO was "refused BEFORE any read" while `openSync(path,'r')` — which
+BLOCKS on a FIFO — ran first (the isFile check was post-open). WHY THEATRE: the comment described
+the intent, the code did the opposite. THE FIX: `O_NONBLOCK` on the open (the round-18 close).
+RE-VERIFIED: pinned + the open is non-blocking.

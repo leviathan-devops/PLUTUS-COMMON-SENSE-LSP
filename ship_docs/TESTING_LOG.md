@@ -140,3 +140,34 @@ match (local == container == `51f95e841cf6247f`). Judge bridge `172.17.0.1:8090`
 **THE PHASE-E BREAKER: 10/10** (sha match · bridge probe · 7/7 scenarios · tokens · no circular ·
 no timeouts · blast radius · adversarial · alive · artifact).
 **THE VERDICT: PASS (7/7) — every recorded derailment (F-01..F-05 classes) is mechanically closed.**
+
+## THE DERAILMENT-PATTERN SUITE (2026-10-01 · the objective's acceptance test)
+
+**WHAT IT PROVES:** the LSP CATCHES the derailments the objective names ("so the agent can't
+derail or make stupid actions"). 6 REAL Plutus derailments pushed through the LIVE pipeline
+(real graph + live JevK5 at :8090); each asserts the reflex fires with the right token and the
+clean case stays SILENT.
+
+| the derailment | the expected reflex | the tokens emitted | the verdict |
+|---|---|---|---|
+| D1 fabricated SL cap 150 (canon 36) | the law surfaces | plutus/law, plutus/suspect | PASS |
+| D2 multi-TP (TP1/TP2/TP3) | a governing law | plutus/law, plutus/suspect | PASS |
+| D3 pair format EURUSD | a governing law | plutus/law, plutus/suspect | PASS |
+| D4 flat RRR | a governing law / drift | plutus/law, plutus/drift | PASS |
+| D5 ZFP 45→60 | the VIOLATION token | plutus/law, plutus/VIOLATION | PASS |
+| D6 a fact-free file | ZERO tokens (precision) | (none) | PASS |
+
+**6/6 PASS.** Artifact `.omp/derailment-suite-results.json`. Run:
+`PLUTUS_L1_PATH=<kg.json> bun scripts/derailment-suite.ts` (add `--no-judge` for the offline mode).
+
+## THE AUDIT ROUNDS 11-18 (the hardening drive)
+
+```
+r9  2c/12h  →  r10 2c/10h  →  r11 0c/13h  →  r12 0c/12h
+r13 0c/7h   →  r14 0c/5h   →  r15 1c/2h   →  r16 0c/4h
+r17 2c/3h   →  r18 1c/5h
+```
+Each round: every BLOCKING finding adjudicated + fixed; every fix pinned. Battery 18 → 46 tests
+(0 fail). The CRITICAL class was eliminated (r11) and re-introduced twice by fixes themselves
+(r15 selftest fall-through; r17 path-normalize-return-raw; r18 absolute-`..`) — each closed.
+**THE GATE: FAIL (r18) — NO SHIP-READY CLAIM. ~19 medium/low findings remain, all recorded.**

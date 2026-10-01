@@ -97,3 +97,61 @@ go-session-proxy lane down; NOT a code verdict).
 **THE HONEST RESIDUAL:** the round-11 audit could not run (provider down — BLOCKED, not PASS);
 the 7 remaining medium/low findings from round-10 (chain drift now closed by the jevk5Fetch
 refactor; `plutus/tier` documented dead-filter; L2 receipt timing) are recorded, not hidden.
+
+## §8 · THE ROUND-11..18 HARDENING DRIVE + THE DERAILMENT SUITE (2026-10-01)
+
+**THE DRIVE:** the audit lane recovered (BUG-12 proxy restored) → 8 consecutive `qwen-code-audit`
+rounds against the four core files. Every BLOCKING finding was adjudicated (Side A probe-error
+vs Side B confirmed defect) and fixed; every fix pinned by a new test. The battery grew
+18 → 46 tests (0 fail), and the bundle was rebuilt at every round.
+
+**THE AUDIT TREND (critical/high per round):**
+```
+r9  2c/12h   r10 2c/10h   r11 0c/13h   r12 0c/12h
+r13 0c/7h    r14 0c/5h    r15 1c/2h    r16 0c/4h
+r17 2c/3h    r18 1c/5h
+```
+The CRITICAL class was eliminated (r11) and then RE-INTRODUCED twice by the fixes themselves
+(r15's selftest fall-through; r17's path-normalize return-raw; r18's absolute-`..` clamp) —
+each a self-inflicted edge in the path/exit confinement code. **THE CONVERGENCE TREND: blocking
+findings fall as real classes close (13→12→7→5→2→4); the residue is an LLM reviewer's unbounded
+supply of fresh edge-cases in code that keeps gaining lines.** The honest stop: CONFIRMED DEFECTS
+FIXED + CRITICAL CLASS ELIMINATED at each round, with the remainder named (below).
+
+**THE FIXES (per class, 8 rounds):**
+1. CRITICALs — `knownAbs`/`MAX_STDIN` ReferenceErrors (r10); the selftest failure-path
+   fall-through (r15); `fileOf` returning RAW while checking NORMALIZED (r17); absolute `..`
+   bypassing the denylist (r18). All closed + pinned.
+2. HIGH — frozen threshold aliases → getters-only (r11); P2 jurisdiction fail-closed (r11);
+   cache serves stale canon → content fingerprint (r11); chain dedupe + `jevk5Fetch` reuse
+   (r10/11); `staleCard`/`cards` never-throw + bounded strings (r12..17); `resolveRoot` STRONG
+   wins at any depth (r13); partition row validation (r13); stdin headerless cap (r11/14);
+   `path.resolve` confinement (r18).
+3. MEDIUM/LOW — v 40+ across: tier-word candidacy (r12), short-name-part survival (r12),
+   deterministic ordering, receive-drain, health array rejection, epsilon at display precision,
+   STALE code allowlist, `Object.hasOwn` NodeId, short-read naming, unknown-method MethodNotFound,
+   subarray-view copy, denylist roots, `cap()` bounding, identity trimming, timer thresholds.
+
+**THE DERAILMENT-PATTERN SUITE (`scripts/derailment-suite.ts`) — THE OBJECTIVE'S PROOF:**
+The operator's objective is that the agent "cannot derail or make stupid actions". The suite
+pushes the 6 REAL Plutus derailments through the LIVE pipeline and asserts the reflex fires:
+
+```
+D1 fabricated SL cap (150 vs the 36-pip canon)  → plutus/law + the SL/TP law surfaced   PASS
+D2 multi-TP (law: ONE TP; edit TP1/TP2/TP3)     → plutus/law, plutus/suspect            PASS
+D3 pair-format (law: EUR/USD; edit EURUSD)      → plutus/law, plutus/suspect            PASS
+D4 flat RRR (law: category-specific)            → plutus/law, plutus/drift              PASS
+D5 ZFP threshold (canon 45; edit 60)            → plutus/law, plutus/VIOLATION          PASS
+D6 a fact-free file                             → ZERO tokens (the precision proof)     PASS
+```
+**6/6 PASS.** Artifact: `.omp/derailment-suite-results.json`. The VIOLATION token fired on the
+ZFP change (the clearest canon breach); the others surface the governing law + SUSPECT/DRIFT.
+
+**THE MEASURED STATE:** battery **46 pass / 0 fail / 158 expects**; 4 live selftests (real graph
++ live JevK5); derailment suite 6/6; bundle `dist/plutus-lsp.js` sha256 see BUILD_STATE.
+
+**THE HONEST RESIDUAL (the audit treadmill named):** ~19 medium/low findings from r17-r18 remain
+unfixed (hunk-hot-path tokenization caching, regex-literal/division stripping in `declarationsIn`,
+`chain`/`relevancePass` request/latency accounting across the health+fault double-fetch, the
+`weakest`-name shadow of the strongest clause, the `plutus/tier` dead token). None is CRITICAL or
+HIGH; all are recorded. NO SHIP-READY CLAIM IS MADE — the last audit gate was FAIL (r18).

@@ -65,3 +65,35 @@ FINDING: `YOU ARE EDITING:` derived from `law.anchor` (the bible path). ROOT CAU
 no target-path param. FIX: `targetFile` threaded pipeline → fileCards → verdictCard; live proof:
 `YOU ARE EDITING: src/plutus-lsp/cards.ts`. LESSON: a warning that names the wrong file is worse
 than silence — it trains the agent to ignore warnings.
+
+## BUG-13 · the exit-drain `: never` throw escaped the stdio handlers (r17→r18)
+FINDING: exitFlushed typed `never` forced a `throw` after scheduling the drain; on the stdio
+`exit` method that exception escaped → uncaught → exit 1 instead of exit 0. ROOT CAUSE: a `: never`
+return type satisfied by THROWING rather than by process.exit(). FIX: `void` + `process.exit` in
+the branches; the IIFE `return` halts. VERIFIED: the live exit path returns EXITCODE=0 with 0
+uncaught errors. LESSON: `never` must be earned by a guaranteed terminator, never a throw.
+
+## BUG-14 · the path confinement checked NORMALIZED but returned RAW (r17 critical)
+FINDING: `/work/../etc/passwd` passed SYSTEM_DENY + ALLOWED_ROOTS (both tested `np`) then
+`return p` handed the RAW string to loadStore. ROOT CAUSE: the normalization was computed but not
+applied to the return. FIX: `return np` (round-17). LESSON: a check on a derived value is void if
+the RAW value is what flows downstream.
+
+## BUG-15 · the hand-rolled normalizer PRESERVED a leading `..` (r18 critical)
+FINDING: `/../etc/passwd` normalized to `/../etc/passwd` (leading `..` kept for absolute paths),
+defeating the `^/(etc|...)` denylist. ROOT CAUSE: the `..` pop-guard only popped when a segment
+existed, else PUSHED `..` — correct for relative paths, wrong for absolute. FIX: `path.resolve()`
+clamps at the root. VERIFIED: pinned + the denylist test. LESSON: use the stdlib resolver, never
+hand-roll path normalization.
+
+## BUG-16 · the FIFO swap TOCTOU (r16→r18)
+FINDING: `statSync().isFile()` before `openSync(path,'r')` raced a swap-to-FIFO; openSync BLOCKS
+on a FIFO → the server hangs. FIX: `openSync(path, O_RDONLY|O_NONBLOCK)` fails fast on a FIFO/
+device. LESSON: check-then-open is a race; the OPEN ITSELF must be non-blocking.
+
+## BUG-17 · the selftest failure paths fell through (r15 critical, fixed then re-fixed r17)
+FINDING: `exitFlushed()` (round-14) only SCHEDULED the exit and returned → `if (!file) { exitFlushed(2); }`
+fell through to `readFileSync(undefined)`. Top-level `return` is illegal in ESM. FIX: an async
+IIFE wrapping the selftest, with `return exitFlushed(n)` on every fatal path + the no-chain path
+exiting synchronously. VERIFIED: the live `--selftest` with no file prints usage and exits 2.
+LESSON: two compounding bugs — a scheduled exit AND a forbidden top-level return.

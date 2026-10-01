@@ -1,0 +1,97 @@
+{
+  "suite": "derailment-patterns",
+  "liveJudge": true,
+  "generated": "2026-10-01T13:10:14.665Z",
+  "pass": 6,
+  "fail": 0,
+  "total": 6,
+  "results": [
+    {
+      "id": "D1",
+      "what": "the fabricated SL cap (the canon ceiling is 36 pip; the edit sets 150)",
+      "tokens": [
+        "plutus/law",
+        "plutus/suspect"
+      ],
+      "verdict": "OK",
+      "passToken": "plutus/law",
+      "passHit": true,
+      "failToken": "SELFTEST OK",
+      "failHit": false,
+      "outTrim": "{\"tokens\":[\"plutus/law\",\"plutus/suspect\"],\"cards\":[{\"shape\":\"LAW\",\"title\":\"LAYER-FIRE — governs this code (relevance 0.69)\",\"rows\":[\"LAW: The Plutus pipeline is NOT a monolithic function that runs all at once. It is a **sequential 5-tool chain** where the agent calls tools one by one, reasoning between each call. Each tool mechanically validates the previous step's output through a multi-layer firewall, making it impossible to skip st\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/PLUTUS_ARCHITECTURE_BIBLE_4.0.md:435\",\"JUDGE: relevance 0.69\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"LAW-TEMPORAL-ANCHOR — governs this code (relevance 0.70)\",\"rows\":[\"LAW: 1. **THE TEMPORAL ENGINE** (the foundation): the locked run-anchor (`--day=YYYY-MM-DD` + `--time=HH:MM`, the 07:00 UTC default) + the physical bar gate (gateBars — every bar > the anchor dropped) + the defensive model-boundary gate. The anchor is LOCKED one-way (a different-value lock THROWS). The g\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/Plutus_Shark_Operator_Audit_Process.md:89\",\"JUDGE: relevance 0.70\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"CONST-RRR-GATE-25 — governs this code (relevance 0.75)\",\"rows\":[\"LAW: Re-confirms [[R09-rrr-floor-2p5]]. The 2026-09-16 GATE-CLASS refusal 'DXY-S RRR 2.60 < 3.0' was doctrine-noncompliant: under the ratified 2.5 floor the trade emits. Kill every 3.0 floor in emission paths (e.g. stale sites in src/constants + the W9 anchor-decision path).\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/reports/Knowledge_Graph_Map_v1.md:531\",\"JUDGE: relevance 0.75\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"MECH-CIRCUIT — g",
+      "verdictStr": "PASS"
+    },
+    {
+      "id": "D2",
+      "what": "the multi-TP violation (the law: ONE TP; the edit defines TP1/TP2/TP3)",
+      "tokens": [
+        "plutus/law",
+        "plutus/suspect"
+      ],
+      "verdict": "OK",
+      "passToken": "plutus/law",
+      "passHit": true,
+      "failToken": null,
+      "failHit": false,
+      "outTrim": "{\"tokens\":[\"plutus/law\",\"plutus/suspect\"],\"cards\":[{\"shape\":\"LAW\",\"title\":\"LAW-PAPER-ANCHOR-BAN — governs this code (relevance 0.47)\",\"rows\":[\"LAW: NEVER compare an output against itself. SL/TP reads ORACLE rows never emissions; member(projection, oracleRows); INVENTED ids fail totality.\\\"\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/MATHEXPR_RULECARD_ARCHITECTURE_BIBLE.md:125\",\"JUDGE: relevance 0.47\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"MECH-COMPILE-GATE — governs this code (relevance 0.44)\",\"rows\":[\"LAW: Parses S-*.md, enforces D13 (empty quote or anchor not doc:line = D13_VIOLATION exit 1), duplicate-key refusal, kind check; writes battery.json fingerprint sha256 ids+quotes, blockCount==predicateCount. Zero deps node builtins only.\\\"\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/PLUTUS_MATHEXPR_CARDS_BIBLE.md:195\",\"JUDGE: relevance 0.44\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"MECH-DISCHARGE-CONTRACT — governs this code (relevance 0.49)\",\"rows\":[\"LAW: READ battery by id never re-declare; quantized compare; exits over files; evidence_only never gating; born_off never armed; OracleError fail-closed; pin fingerprint.\\\"\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/PLUTUS_MATHEXPR_CARDS_BIBLE.md:250\",\"JUDGE: relevance 0.49\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"COMP-FAILURE-STORE — governs this code (relevance 0.45)\",\"rows\":[\"LAW: > \\\"a refine/retry is correct. not a hard throw... only hard throw SPECIFIC MICRO COMPONENTS after they have failed 3 refinements and then full data needs to be stored in an internal SQLite db... at the end of the pipeline all failure data needs to be synthesiz",
+      "verdictStr": "PASS"
+    },
+    {
+      "id": "D3",
+      "what": "the pair-format violation (the law: EUR/USD; the edit uses EURUSD)",
+      "tokens": [
+        "plutus/law",
+        "plutus/suspect"
+      ],
+      "verdict": "OK",
+      "passToken": "plutus/law",
+      "passHit": true,
+      "failToken": null,
+      "failHit": false,
+      "outTrim": "{\"tokens\":[\"plutus/law\",\"plutus/suspect\"],\"cards\":[{\"shape\":\"LAW\",\"title\":\"LAW-COUNT-INV — governs this code (relevance 0.51)\",\"rows\":[\"LAW: MUST carry count invariant: card(setups), gte(card(setups),24), forall(t, withinTol(t)). Rule over collection without cardinality INCOMPLETE.\\\"\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/MATHEXPR_RULECARD_ARCHITECTURE_BIBLE.md:38\",\"JUDGE: relevance 0.51\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"MECH-C1-PARALLEL — governs this code (relevance 0.53)\",\"rows\":[\"LAW: mechanics: 'Pair-native parallel runs finish first, then the DXY cascade refines direction and authority only — complementary, never overwriting or duplicating. Overwrite = cascade-law violation; the gate is the divergence recorded with the pair-native held and macro winning.'\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/mechanisms/cascade-35-complementary.md:7\",\"JUDGE: relevance 0.53\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"CARD-COUNT-FLOOR — governs this code (relevance 0.50)\",\"rows\":[\"LAW: card(setups)>=24 f(T)=N*(1+P).\\\"\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/MATHEXPR_RULECARD_ARCHITECTURE_BIBLE.md:383\",\"JUDGE: relevance 0.50\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"CARD-E3-NEVER-CONTRACT — governs this code (relevance 0.65)\",\"rows\":[\"LAW: CONTRACT_VIOLATION 213 rows; CRITICAL.\\\"\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/MATHEXPR_RULECARD_ARCHITECTURE_BIBLE.md:441\",\"JUDGE: relevance 0.65\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"CARD-TRIGGER-LONG — govern",
+      "verdictStr": "PASS"
+    },
+    {
+      "id": "D4",
+      "what": "the flat RRR (the law: category-specific; the edit sets one ratio)",
+      "tokens": [
+        "plutus/law",
+        "plutus/drift"
+      ],
+      "verdict": "OK",
+      "passToken": "plutus/law",
+      "passHit": true,
+      "failToken": null,
+      "failHit": false,
+      "outTrim": "{\"tokens\":[\"plutus/law\",\"plutus/drift\"],\"cards\":[{\"shape\":\"LAW\",\"title\":\"LAYER-FIRE — governs this code (relevance 0.64)\",\"rows\":[\"LAW: The Plutus pipeline is NOT a monolithic function that runs all at once. It is a **sequential 5-tool chain** where the agent calls tools one by one, reasoning between each call. Each tool mechanically validates the previous step's output through a multi-layer firewall, making it impossible to skip st\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/PLUTUS_ARCHITECTURE_BIBLE_4.0.md:435\",\"JUDGE: relevance 0.64\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"LAW-TEMPORAL-ANCHOR — governs this code (relevance 0.58)\",\"rows\":[\"LAW: 1. **THE TEMPORAL ENGINE** (the foundation): the locked run-anchor (`--day=YYYY-MM-DD` + `--time=HH:MM`, the 07:00 UTC default) + the physical bar gate (gateBars — every bar > the anchor dropped) + the defensive model-boundary gate. The anchor is LOCKED one-way (a different-value lock THROWS). The g\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/Plutus_Shark_Operator_Audit_Process.md:89\",\"JUDGE: relevance 0.58\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"CONST-RRR-GATE-25 — governs this code (relevance 0.71)\",\"rows\":[\"LAW: Re-confirms [[R09-rrr-floor-2p5]]. The 2026-09-16 GATE-CLASS refusal 'DXY-S RRR 2.60 < 3.0' was doctrine-noncompliant: under the ratified 2.5 floor the trade emits. Kill every 3.0 floor in emission paths (e.g. stale sites in src/constants + the W9 anchor-decision path).\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/reports/Knowledge_Graph_Map_v1.md:531\",\"JUDGE: relevance 0.71\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"MECH-CIRCUIT — gov",
+      "verdictStr": "PASS"
+    },
+    {
+      "id": "D5",
+      "what": "the ZFP threshold change (the canon: 45; the edit sets 60)",
+      "tokens": [
+        "plutus/law",
+        "plutus/violation"
+      ],
+      "verdict": "OK",
+      "passToken": "plutus/law",
+      "passHit": true,
+      "failToken": null,
+      "failHit": false,
+      "outTrim": "{\"tokens\":[\"plutus/law\",\"plutus/violation\"],\"cards\":[{\"shape\":\"LAW\",\"title\":\"LAW-PAPER-ANCHOR-BAN — governs this code (relevance 0.60)\",\"rows\":[\"LAW: NEVER compare an output against itself. SL/TP reads ORACLE rows never emissions; member(projection, oracleRows); INVENTED ids fail totality.\\\"\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/MATHEXPR_RULECARD_ARCHITECTURE_BIBLE.md:125\",\"JUDGE: relevance 0.60\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"MECH-COMPILE-GATE — governs this code (relevance 0.63)\",\"rows\":[\"LAW: Parses S-*.md, enforces D13 (empty quote or anchor not doc:line = D13_VIOLATION exit 1), duplicate-key refusal, kind check; writes battery.json fingerprint sha256 ids+quotes, blockCount==predicateCount. Zero deps node builtins only.\\\"\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/PLUTUS_MATHEXPR_CARDS_BIBLE.md:195\",\"JUDGE: relevance 0.63\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"MECH-DISCHARGE-CONTRACT — governs this code (relevance 0.72)\",\"rows\":[\"LAW: READ battery by id never re-declare; quantized compare; exits over files; evidence_only never gating; born_off never armed; OracleError fail-closed; pin fingerprint.\\\"\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: /home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS/MASTER_CONTEXT/PLUTUS_MATHEXPR_CARDS_BIBLE.md:250\",\"JUDGE: relevance 0.72\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":12},{\"shape\":\"LAW\",\"title\":\"COMP-FAILURE-STORE — governs this code (relevance 0.59)\",\"rows\":[\"LAW: > \\\"a refine/retry is correct. not a hard throw... only hard throw SPECIFIC MICRO COMPONENTS after they have failed 3 refinements and then full data needs to be stored in an internal SQLite db... at the end of the pipeline all failure data needs to be synthes",
+      "verdictStr": "PASS"
+    },
+    {
+      "id": "D6",
+      "what": "a fact-free file — the LSP must stay SILENT (the precision proof)",
+      "tokens": [],
+      "verdict": "NONE",
+      "passToken": "NO-LAW",
+      "passHit": true,
+      "failToken": null,
+      "failHit": false,
+      "outTrim": "THROW: ENOENT: no such file or directory, open '/home/leviathan/JARVIS_WORKSPACE/Shared_Workspace/PLUTUS-COMMON-SENSE-LSP/scripts/../src/xqzy.ts'",
+      "verdictStr": "PASS"
+    }
+  ]
+}

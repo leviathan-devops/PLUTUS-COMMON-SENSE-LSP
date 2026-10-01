@@ -35,3 +35,16 @@ dead-line fixes). THE MECHANISM: one giant heredoc = one failure domain. THE REM
 three small asserted batches (each `assert old in s` before replace), re-verified with the
 battery after each. THE LESSON: small asserted batches survive interruptions; giant ones do not.
 THE HONEST COUNT: 5 derailments; all 5 remedied with a named mechanism.
+
+## F-06 · the audit lane crash-loop misdiagnosed as a code verdict (2026-10-01, caught)
+WHAT: 3 rounds reported "GATE: BLOCKED (provider unreachable)" with the code blamed implicitly.
+THE MECHANISM: the proxy's ExecStart file was DELETED → 19k-restart loop → :4097 never bound.
+THE REMEDY: check the ExecStart target exists FIRST; restored the file; the lane ran. THE LESSON:
+a BLOCKED gate is an INFRA failure until the infra is proven healthy.
+
+## F-07 · the 8-round audit read as convergence while fixes added criticals (2026-10-01, caught)
+WHAT: rounds 11-18 handled 60+ findings but r15/r17/r18 EACH introduced a fresh CRITICAL.
+THE MECHANISM: the fixes touched the same path/exit/confinement code — each fix added lines and a
+new edge (return-raw, `throw` in `: never`, `..` clamp). THE REMEDY: report the trend WITH the
+re-introductions; stop on CONFIRMED-DEFECTS-FIXED, not a zero count. THE LESSON: fix-density in
+one subsystem re-introduces defects; the audit count is not a convergence proof.
