@@ -22,3 +22,5 @@ The LSP binds at session construction (a restart is needed for a new server).
 The 8-item corpus is small. The judge's ceiling is the question's writeability.
 
 Dist fingerprint (2026-10-01): `3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155`
+
+Dist fingerprint (2026-10-02): `f45727589b05caba4894455f65e4ee34647ac665c38223aeb033ae9fb5ee0bfc`

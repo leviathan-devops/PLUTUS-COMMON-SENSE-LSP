@@ -45,3 +45,13 @@ Evidence: the trend + the three self-inflicted criticals.
 ## D-12 · THE OBJECTIVE'S ACCEPTANCE TEST IS A DERAILMENT SUITE
 A green battery proves the MECHANISM; the objective ("the agent cannot derail") needs REAL
 derailments pushed through the pipeline. Evidence: scripts/derailment-suite.ts, 6/6 PASS.
+
+## D-13 · THE CONFIGURABLE SCOPE (2026-10-02)
+The scope gate reads PLUTUS_LSP_SCOPE (the path segment) + PLUTUS_LSP_SCOPE_FILES (the explicit
+files) with PLUTUS defaults. A re-host sets ONE env var and gets scoping — the boilerplate's reuse
+seam. Evidence: /tmp/scope-custom.ts (default OUT, custom segment IN, custom file IN).
+
+## D-14 · THE CAP AT THE ALLOCATION SITE (2026-10-02)
+10 security findings, every one a cap that existed elsewhere but not on the HOTTEST path of its
+surface. The law: the cap goes AT the allocation/interpolation site, never one layer up.
+Evidence: F-17 + A45.

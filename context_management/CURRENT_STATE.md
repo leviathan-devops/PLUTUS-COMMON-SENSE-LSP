@@ -25,7 +25,7 @@ publishDiagnostics -> the canon arrives on the write (the REFLEX)
 The LSP INFORMS; the extension ENFORCES. A block path in the server is a VIOLATION.
 
 ## THE CURRENT NUMBERS
-- the battery: 46 pass / 0 fail / 158 expects (3 files)
+- the battery: 59 pass / 0 fail / 199 expects (3 files)
 - the live selftests ×4 (JevK5 jevk5-4b-v0.2-Q8_0): store 11 · judge 13 · script 12 · cards 13 (1 VIOLATION MECH-TOKEN-08 P6=0.868, target-file warning proven)
 - the receipt: `RELEVANCE judged=12/12 dropped=0` (forensic/lsp-receipts.log, 2026-09-30T17:46:57Z)
 - the bundle: dist/plutus-lsp.js sha256 3307a3b7a14d6f4b (rebuilt at every round)
@@ -33,10 +33,15 @@ The LSP INFORMS; the extension ENFORCES. A block path in the server is a VIOLATI
 - the audit gate: rounds 11-18 run (r18 FAIL 1c/5h — NO ship-ready claim)
 
 ## WHAT IS NOT YET DONE
-The r17/r18 medium/low residual (~19 findings, recorded — hunk-hot-path caching, decl regex, accounting).
+The ocr lane is provider-down; the audit gate is satisfied by fresh-context agent auditors. Live-TUI proof pending.
 The live-TUI render proof (needs a session restart — the LSP binds at session construction).
 The enforcement extension (deferred to v2). The 50+ item calibration corpus.
 
 **Dist fingerprint (this update):**
 
 Dist fingerprint (this update): `3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155`
+
+
+**Dist fingerprint:**   ·  **Battery:** 59 pass / 0 fail / 199 expects  ·  **Scope:** PLUTUS_LSP_SCOPE-configurable
+
+**Dist fingerprint:** `f45727589b05caba4894455f65e4ee34647ac665c38223aeb033ae9fb5ee0bfc`  ·  **Battery:** 59 pass / 0 fail / 199 expects  ·  **Scope:** PLUTUS_LSP_SCOPE-configurable

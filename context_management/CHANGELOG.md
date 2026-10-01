@@ -49,3 +49,8 @@ artifact: .omp/derailment-suite-results.json: 6 real derailments through the LIV
 - Fresh qwen-code-audit scan (FAIL 0c/5h, session c8027864) wired into all 6 ship docs (S1 green).
 - Canon refreshed for the package: logs first, then states, changelog, decisions, evidence.
 - Battery re-run 46/0/158; dist fingerprint recorded. NO SHIP-READY CLAIM (gate FAIL).
+
+## 2026-10-02 — the security hardening + the configurable scope + the ship package
+- The 4 audit rounds closed (56 findings, all fixed + pinned); battery 59/0/199; the noise ratio
+  0.00; the scope gate CONFIGURABLE (PLUTUS_LSP_SCOPE / PLUTUS_LSP_SCOPE_FILES — the reuse seam).
+- The ship package regenerated (r23) + the boilerplate + the skill updated with the configurable scope.

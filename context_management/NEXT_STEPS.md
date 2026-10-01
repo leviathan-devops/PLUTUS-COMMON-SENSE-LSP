@@ -26,3 +26,7 @@ counts without blocking the keystroke path.
 
 ## NOW - THE SHIP PACKAGE (this turn)
 Assemble per the ship-package skill: blocks from the docs -> dist gate -> native assembly -> audit. Gate FAIL stays FAIL.
+
+## THE SHIP PACKAGE (2026-10-02)
+Assembled at Ship_Packages/plutus-lsp-r23 with the configurable-scope machinery + the boilerplate.
+Gate: the ship-package PACKAGE_AUDIT reads PASS; the ocr regression is BLOCKED (provider-down).

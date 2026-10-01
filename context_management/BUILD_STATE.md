@@ -1,7 +1,7 @@
 # BUILD_STATE — the dist + the evidence
 
 ## THE DIST
-`dist/plutus-lsp.js` — 41,046 bytes · sha256 `3307a3b7a14d6f4b`
+`dist/plutus-lsp.js` — 41,046 bytes · sha256 
 (rebuilt + committed at 816b384 via `bun build scripts/plutus-lsp.ts --target bun --format esm`).
 The LSP runtime spawns `bun scripts/plutus-lsp.ts --stdio` (source); the dist is the sealed artifact.
 
@@ -23,7 +23,7 @@ package.json · tsconfig.json
 [.ts,.tsx,.js,.md], rootMarkers [MASTER_CONTEXT, .omp/graph-intelligence, .arsumbris, tsconfig.json]).
 
 ## THE BATTERY (measured)
-`bun test tests/` -> **46 pass / 0 fail / 158 expects** (3 files, r18 batch).
+bun test v1.4.2 (744846f84) -> **59 pass / 0 fail / 199 expects**
 
 ## THE RUNTIME KEYS (the spawn gates)
 `task.enableLsp` (the load-bearing one) · `lsp.diagnosticsOnEdit` · `lsp.diagnosticsOnWrite`.
@@ -33,3 +33,9 @@ package.json · tsconfig.json
 
 ## SHA CHAIN
 - 2026-10-01 (r19 prelude): `3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155` (dist/plutus-lsp.js)
+
+## SHA CHAIN (latest)
+- f45727589b05caba (the security-hardened, scope-gated bundle)
+
+## SHA CHAIN (latest)
+- f45727589b05caba (the security-hardened, scope-gated bundle)

@@ -10,3 +10,6 @@
 | T6 | the .md canon handling (a drift card) | OPEN (D2) | the build |
 | T7 | the `plutus/callers` token (the blast radius) | DONE (callersOf real read, live in cards) | the build |
 | T8 | the round-11 audit re-run (lane down) | OPEN (BLOCKED, not PASS) | the build |
+
+| T9 | the live-TUI render proof | OPEN (needs a session restart — the operator) | the operator |
+| T10 | the security re-audit after the hardening | BLOCKED (ocr provider-down) | the build |

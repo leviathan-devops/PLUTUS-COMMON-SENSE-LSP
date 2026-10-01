@@ -55,3 +55,11 @@ PUBLISH n=3 tokens=plutus/law,plutus/tier,plutus/suspect file=…/mirror.ts verd
 - derailment suite 6/6 (unchanged since seal):
 
 Dist fingerprint (2026-10-01): `3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155`
+
+## THE SECURITY-HARDENED STATE (2026-10-02)
+- battery 59 pass / 0 fail / 199 expects
+- derailment suite 6/6 (hermetic)
+- scope gate 7/7 (configurable: PLUTUS_LSP_SCOPE / _FILES)
+- noise ratio 0.00 (was 2.0)
+- 4 audit rounds (r19 README-flaw, r20 reviewer, r21+r22 reviewer, r23 security): 56 findings, ALL fixed
+- dist fingerprint: 

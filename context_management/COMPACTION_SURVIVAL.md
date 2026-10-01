@@ -26,3 +26,5 @@ proof (T1 — the operator). The checkpoint seal. The 50+ corpus.
 The calibration F1 is 0.60 (precision 0.50, recall 0.75) on 8 items — bounded by the polarity law.
 
 Dist fingerprint (2026-10-01): `3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155`
+
+Dist fingerprint (2026-10-02): `f45727589b05caba4894455f65e4ee34647ac665c38223aeb033ae9fb5ee0bfc`
