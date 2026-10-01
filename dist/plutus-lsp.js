@@ -124,6 +124,12 @@ function loadStore(startFile) {
   }
   let raw = "";
   try {
+    if (!statSync(l1Path).isFile())
+      throw new Error("not a regular file");
+  } catch (e) {
+    throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${e.message})`);
+  }
+  try {
     const fd = openSync(l1Path, "r");
     try {
       const st = fstatSync(fd);
@@ -776,7 +782,7 @@ function lawCard(kept, totalCandidates, judged) {
   const clean = kept.filter((k) => k && k.law && typeof k.law.name === "string" && k.law.name.trim().length > 0 && typeof k.law.statement === "string" && k.law.statement.trim().length > 0);
   const tot = typeof totalCandidates === "number" && Number.isFinite(totalCandidates) && totalCandidates >= 0 ? Math.floor(totalCandidates) : 0;
   const n = clean.length;
-  return clean.map(({ law, p }) => {
+  return clean.slice(0, 32).map(({ law, p }) => {
     const measured = typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     const prob = measured ? `relevance ${p.toFixed(2)}` : "relevance unread";
     const of = tot > n ? ` \xB7 kept ${n} of ${tot} candidates` : "";
@@ -815,9 +821,9 @@ function verdictCard(v, kept, targetFile) {
   if (v.kind === "INCONCLUSIVE") {
     return {
       shape: "SUSPECT",
-      title: `INCONCLUSIVE \u2014 the judge could not reach a verdict (weakest clause ${v.weakest ?? "none"})`,
+      title: `INCONCLUSIVE \u2014 the judge could not reach a verdict (weakest clause ${cap(v.weakest, 16) || "none"})`,
       rows: [
-        `the undecided clause: ${v.weakest ?? "(no deciding clause answered)"}`,
+        `the undecided clause: ${cap(v.weakest, 16) || "(no deciding clause answered)"}`,
         `VECTOR: ${Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ") || "(empty)"}`
       ],
       severity: SEVERITY.Hint,
@@ -852,7 +858,7 @@ function verdictCard(v, kept, targetFile) {
     return a || "(anchor missing)";
   })();
   const known = v.kind === "VIOLATION" || v.kind === "DRIFT" ? v.kind : "SUSPECT";
-  const kindNote = known === "SUSPECT" && v.kind !== "SUSPECT" ? ` (kind ${v.kind} coerced)` : "";
+  const kindNote = known === "SUSPECT" && v.kind !== "SUSPECT" ? ` (kind ${cap(v.kind, 32)} coerced)` : "";
   const effKind = !attributed ? "SUSPECT" : known;
   const weakScore = v.weakest ? vector[v.weakest] : undefined;
   const vacuous = v.weakest === null || v.weakest === undefined || typeof weakScore !== "number" || !Number.isFinite(weakScore);
@@ -875,7 +881,7 @@ function verdictCard(v, kept, targetFile) {
     const dc = v.weakest;
     return {
       shape: "DRIFT",
-      title: `DRIFT \u2014 this change contradicts a prior decision (${dc}=${pct(vector[dc])})`,
+      title: `DRIFT \u2014 this change contradicts a prior decision (${cap(dc, 16)}=${pct(vector[dc])})`,
       rows: [`LAW: ${cap(law.statement, 400)}`, `SOURCE: ${srcOf(law)}`, `VECTOR: ${vecStr}`],
       severity: SEVERITY.Warning,
       source: "plutus/drift",
@@ -1062,54 +1068,56 @@ var exitFlushed = (code) => {
   } catch {}
   if (!sendChainRef) {
     process.exit(code);
-    return;
   }
   let done = false;
   const finish = () => {
     if (!done) {
       done = true;
-      process.exit(code);
     }
+    process.exit(code);
   };
   const guard = setTimeout(finish, 1500);
   Promise.resolve(sendChainRef).catch(() => {}).then(() => {
     clearTimeout(guard);
     finish();
   });
+  throw new Error("exitFlushed: unreachable");
 };
 var sendChainRef = null;
 if (process.argv.includes("--selftest")) {
-  const i = process.argv.indexOf("--selftest");
-  const file = process.argv.slice(i + 1).find((a) => !a.startsWith("--"));
-  if (!file) {
-    console.error("usage: --selftest <file> [--no-judge]");
-    exitFlushed(2);
-  }
-  let src = "";
-  try {
-    src = readFileSync(file, "utf8");
-  } catch (e) {
-    console.error(`ENOENT: ${file} \u2014 ${e.message}`);
-    exitFlushed(2);
-  }
-  let r;
-  try {
-    r = await pipeline(file, src, !process.argv.includes("--no-judge"));
-  } catch (e) {
-    console.error(`PIPELINE_FAIL: ${e.message}`);
-    exitFlushed(1);
-  }
-  console.log(JSON.stringify(r, null, 1));
-  if (r.refused) {
-    console.error(`REFUSED: ${r.refused}`);
-    exitFlushed(1);
-  }
-  if (r.tokens.length === 0) {
-    console.error("NO TOKENS \u2014 the reflex produced no card");
-    exitFlushed(1);
-  }
-  console.error(`SELFTEST OK \u2014 ${r.cards.length} card(s), tokens: ${r.tokens.join(", ")}`);
-  exitFlushed(0);
+  await (async () => {
+    const i = process.argv.indexOf("--selftest");
+    const file = process.argv.slice(i + 1).find((a) => !a.startsWith("--"));
+    if (!file) {
+      console.error("usage: --selftest <file> [--no-judge]");
+      return exitFlushed(2);
+    }
+    let src = "";
+    try {
+      src = readFileSync(file, "utf8");
+    } catch (e) {
+      console.error(`ENOENT: ${file} \u2014 ${e.message}`);
+      return exitFlushed(2);
+    }
+    let r;
+    try {
+      r = await pipeline(file, src, !process.argv.includes("--no-judge"));
+    } catch (e) {
+      console.error(`PIPELINE_FAIL: ${e.message}`);
+      return exitFlushed(1);
+    }
+    console.log(JSON.stringify(r, null, 1));
+    if (r.refused) {
+      console.error(`REFUSED: ${r.refused}`);
+      return exitFlushed(1);
+    }
+    if (r.tokens.length === 0) {
+      console.error("NO TOKENS \u2014 the reflex produced no card");
+      return exitFlushed(1);
+    }
+    console.error(`SELFTEST OK \u2014 ${r.cards.length} card(s), tokens: ${r.tokens.join(", ")}`);
+    return exitFlushed(0);
+  })();
 }
 if (process.argv.includes("--stdio")) {
   receipt2(`INIT pid=${process.pid}`);
@@ -1173,29 +1181,27 @@ ${j}`);
     if (auth && auth.toLowerCase() !== "localhost")
       throw new Error(`NON_LOCAL_AUTHORITY: ${uri.slice(0, 60)}`);
     if (/^\/[a-zA-Z]:[\/]/.test(p))
-      return p.slice(1);
-    const np = (() => {
-      const abs = p.startsWith("/");
-      const out = [];
-      for (const seg of p.split("/")) {
-        if (seg === "" || seg === ".")
-          continue;
-        if (seg === "..") {
-          if (out.length > 0 && out[out.length - 1] !== "..")
-            out.pop();
-          else
-            out.push("..");
-          continue;
-        }
-        out.push(seg);
+      p = p.slice(1);
+    const abs = p.startsWith("/");
+    const out = [];
+    for (const seg of p.split(/[\/\\]/)) {
+      if (seg === "" || seg === ".")
+        continue;
+      if (seg === "..") {
+        if (out.length > 0 && out[out.length - 1] !== "..")
+          out.pop();
+        else
+          out.push("..");
+        continue;
       }
-      return (abs ? "/" : "") + out.join("/");
-    })();
+      out.push(seg);
+    }
+    const np = (abs ? "/" : "") + out.join("/");
     if (SYSTEM_DENY.test(np))
       throw new Error(`PATH_REFUSED: ${np.slice(0, 60)}`);
     if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => np === r || np.startsWith(r.endsWith("/") ? r : r + "/")))
       throw new Error(`PATH_OUTSIDE_ROOTS: ${np.slice(0, 60)}`);
-    return p;
+    return np;
   };
   const seq = new Map;
   const pending = new Map;

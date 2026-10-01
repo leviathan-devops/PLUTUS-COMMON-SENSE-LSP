@@ -184,6 +184,13 @@ export function loadStore(startFile: string): Store {
     throw new Error(`${PLUTUS_NO_STORE}: PLUTUS_L1_PATH must be a .json path (got ${envPath.slice(0, 80)})`);
   }
   let raw = "";
+  // FIX (audit round-17: refuse non-regular files BEFORE open) — openSync BLOCKS on a FIFO,
+  // so the post-open isFile check was too late (a planted FIFO hung the server). stat first.
+  try {
+    if (!statSync(l1Path).isFile()) throw new Error("not a regular file");
+  } catch (e) {
+    throw new Error(`${PLUTUS_NO_STORE}: ${l1Path} unreadable (${(e as Error).message})`);
+  }
   try {
     const fd = openSync(l1Path, "r");
     try {

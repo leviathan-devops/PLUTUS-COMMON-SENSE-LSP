@@ -34,17 +34,12 @@ export type PlutusLspToken = (typeof PLUTUS_LSP_TOKENS)[number];
 
 export const SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 } as const;
 
-// FIX (audit round-14: bound every interpolated string) — store/judge strings flowed verbatim
-// into titles/rows. LSP diagnostic messages are PLAIN TEXT (editors render them as text, not
-// markdown/HTML), so the risk is SIZE + spoofing via unbounded/control characters, not markup.
-// cap() bounds length and strips CR/LF/control chars, keeping the payload readable. A consumer
-// that DOES render markup must escape on ITS side; the server guarantees plain, bounded text.
-// FIX (audit round-14: bound every interpolated string) — store/judge strings flowed verbatim
-// into titles/rows. LSP diagnostic messages are PLAIN TEXT (editors render them as text, not
-// markdown/HTML), so the risk is SIZE + spoofing via unbounded/control characters, not markup.
-// cap() bounds length and strips CR/LF/control chars, keeping the payload readable.
-// FIX (audit round-15: cap FIRST, then srcOf) — srcOf called cap before its initialization
-// (TDZ risk if ever called at module init). cap is defined first now.
+// FIX (audit round-14/15: bound every interpolated string) — store/judge strings flowed
+// verbatim into titles/rows. LSP diagnostic messages are PLAIN TEXT (editors render them as
+// text, not markdown/HTML), so the risk is SIZE + spoofing via unbounded/control characters,
+// not markup. cap() bounds length, strips C0/C1/DEL + unicode separators + bidi controls, and
+// is defined BEFORE srcOf (round-15: no TDZ). A consumer that DOES render markup must escape
+// on ITS side; the server guarantees plain, bounded text.
 const cap = (v: unknown, n = 240): string => {
   const t = typeof v === "string" ? v : v === null || v === undefined ? "" : String(v);
   // FIX (round-16: strip C0 + C1 + DEL + unicode line/para separators + bidi controls)
@@ -113,7 +108,7 @@ export function lawCard(kept: JudgedLaw[] | null | undefined, totalCandidates: n
   // Infinity rendered `kept n of Infinity candidates`. Only a finite non-negative int counts.
   const tot = typeof totalCandidates === "number" && Number.isFinite(totalCandidates) && totalCandidates >= 0 ? Math.floor(totalCandidates) : 0;
   const n = clean.length;
-  return clean.map(({ law, p }) => {
+  return clean.slice(0, 32).map(({ law, p }) => {
     const measured = typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     const prob = measured ? `relevance ${p.toFixed(2)}` : "relevance unread";
     const of = tot > n ? ` · kept ${n} of ${tot} candidates` : "";
@@ -174,9 +169,9 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   if (v.kind === "INCONCLUSIVE") {
     return {
       shape: "SUSPECT",
-      title: `INCONCLUSIVE — the judge could not reach a verdict (weakest clause ${v.weakest ?? "none"})`,
+      title: `INCONCLUSIVE — the judge could not reach a verdict (weakest clause ${cap(v.weakest, 16) || "none"})`,
       rows: [
-        `the undecided clause: ${v.weakest ?? "(no deciding clause answered)"}`,
+        `the undecided clause: ${cap(v.weakest, 16) || "(no deciding clause answered)"}`,
         `VECTOR: ${Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ") || "(empty)"}`,
       ],
       severity: SEVERITY.Hint,
@@ -239,7 +234,7 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   // FIX (audit: explicit kind gate) — an unknown kind coerces to SUSPECT LOUDLY: the row
   // names the coerced kind instead of silently casting via `as`. Only VIOLATION/DRIFT survive.
   const known = v.kind === "VIOLATION" || v.kind === "DRIFT" ? v.kind : "SUSPECT";
-  const kindNote = known === "SUSPECT" && v.kind !== "SUSPECT" ? ` (kind ${v.kind} coerced)` : "";
+  const kindNote = known === "SUSPECT" && v.kind !== "SUSPECT" ? ` (kind ${cap(v.kind, 32)} coerced)` : "";
   const effKind: "VIOLATION" | "DRIFT" | "SUSPECT" = !attributed ? "SUSPECT" : known;
   // FIX (audit round-11: no vacuous Error) — when weakest is null or its score is missing,
   // the old title rendered `VIOLATION — … (none=n/a)`: a confident breach card with NO measured
@@ -270,7 +265,7 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
     const dc = v.weakest as string;
     return {
       shape: "DRIFT",
-      title: `DRIFT — this change contradicts a prior decision (${dc}=${pct(vector[dc as keyof typeof vector])})`,
+      title: `DRIFT — this change contradicts a prior decision (${cap(dc, 16)}=${pct(vector[dc as keyof typeof vector])})`,
       rows: [`LAW: ${cap(law.statement, 400)}`, `SOURCE: ${srcOf(law)}`, `VECTOR: ${vecStr}`],
       severity: SEVERITY.Warning,
       source: "plutus/drift",

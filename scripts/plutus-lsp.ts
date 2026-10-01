@@ -161,38 +161,45 @@ export async function pipeline(file: string, source: string, useJudge = true): P
 // FIX (audit round-14: drain the send chain before exit) — send() serializes on sendChain,
 // but the old exitFlushed called process.exit() immediately, dropping the shutdown response
 // and the last publishDiagnostics. Flush receipts, then await the chain (bounded), then exit.
-const exitFlushed = (code: number): void => {
+const exitFlushed = (code: number): never => {
   try { receiptFlush(); } catch { /* best-effort */ }
   // FIX (audit round-15 CRITICAL: HALT when there is no chain) — the round-14 drain-only
   // version SCHEDULED the exit and returned, so the selftest's failure paths FELL THROUGH
   // (`if (!file) { exitFlushed(2); }` then readFileSync(undefined)). With no send chain (every
   // non-stdio path) the exit is IMMEDIATE and halts. Only the stdio shutdown path (a live
   // chain) drains, and it is the last statement in its handler.
-  if (!sendChainRef) { process.exit(code); return; }
+  if (!sendChainRef) { process.exit(code); }
   let done = false;
-  const finish = () => { if (!done) { done = true; process.exit(code); } };
+  const finish = (): never => { if (!done) { done = true; } process.exit(code); };
   const guard = setTimeout(finish, 1500);
   Promise.resolve(sendChainRef).catch(() => {}).then(() => { clearTimeout(guard); finish(); });
+  // unreachable: process.exit() in finish terminates. Typed `never` so callers narrow.
+  throw new Error("exitFlushed: unreachable");
 };
 // the stdio block installs its serialized write chain here so exits can drain it
 let sendChainRef: Promise<void> | null = null;
 // ── THE SELFTEST (the W4 gate) ───────────────────────────────────────────────
 if (process.argv.includes("--selftest")) {
+  // FIX (audit round-17: an IIFE so failure paths can RETURN) — top-level `return` is illegal
+  // in an ESM module, so the old bare exitFlushed(n) fell through if the exit ever stopped
+  // halting. The IIFE makes every fatal path an explicit `return exitFlushed(n)`.
+  await (async () => {
   const i = process.argv.indexOf("--selftest");
   // FIX (audit:59 + flag order) — take the first NON-FLAG arg after --selftest, so
   // `--selftest --no-judge <file>` works the same as `--selftest <file> --no-judge`.
   const file = process.argv.slice(i + 1).find((a) => !a.startsWith("--"));
-  if (!file) { console.error("usage: --selftest <file> [--no-judge]"); exitFlushed(2); }
+  if (!file) { console.error("usage: --selftest <file> [--no-judge]"); return exitFlushed(2); }
   let src = "";
-  try { src = readFileSync(file, "utf8"); } catch (e) { console.error(`ENOENT: ${file} — ${(e as Error).message}`); exitFlushed(2); }
+  try { src = readFileSync(file, "utf8"); } catch (e) { console.error(`ENOENT: ${file} — ${(e as Error).message}`); return exitFlushed(2); }
   let r: PipelineResult;
   try { r = await pipeline(file, src, !process.argv.includes("--no-judge")); }
-  catch (e) { console.error(`PIPELINE_FAIL: ${(e as Error).message}`); exitFlushed(1); }   // FIX (audit:62)
+  catch (e) { console.error(`PIPELINE_FAIL: ${(e as Error).message}`); return exitFlushed(1); }   // FIX (audit:62)
   console.log(JSON.stringify(r, null, 1));
-  if (r.refused) { console.error(`REFUSED: ${r.refused}`); exitFlushed(1); }
-  if (r.tokens.length === 0) { console.error("NO TOKENS — the reflex produced no card"); exitFlushed(1); }
+  if (r.refused) { console.error(`REFUSED: ${r.refused}`); return exitFlushed(1); }
+  if (r.tokens.length === 0) { console.error("NO TOKENS — the reflex produced no card"); return exitFlushed(1); }
   console.error(`SELFTEST OK — ${r.cards.length} card(s), tokens: ${r.tokens.join(", ")}`);
-  exitFlushed(0);
+  return exitFlushed(0);
+  })();
 }
 
 // ── THE STDIO SERVER ─────────────────────────────────────────────────────────
@@ -254,22 +261,23 @@ if (process.argv.includes("--stdio")) {
     // resolves outside the workspace and probes the filesystem. Non-localhost authority is a
     // NON_FILE_SCHEME-class refusal, never a path handed to loadStore.
     if (auth && auth.toLowerCase() !== "localhost") throw new Error(`NON_LOCAL_AUTHORITY: ${uri.slice(0, 60)}`);
-    if (/^\/[a-zA-Z]:[\/]/.test(p)) return p.slice(1);                      // /c:/x -> c:/x
-    // FIX (audit round-16: NORMALIZE first) — `/work/../etc/passwd` passed the raw prefix
-    // check. Collapse `.`/`..`/`//` before either the denylist or the allowlist test.
-    const np = (() => {
-      const abs = p.startsWith("/");
-      const out: string[] = [];
-      for (const seg of p.split("/")) {
-        if (seg === "" || seg === ".") continue;
-        if (seg === "..") { if (out.length > 0 && out[out.length - 1] !== "..") out.pop(); else out.push(".."); continue; }
-        out.push(seg);
-      }
-      return (abs ? "/" : "") + out.join("/");
-    })();
+    // FIX (audit round-17 CRITICAL: the Windows drive is NORMALIZED INTO p, not early-returned)
+    // — the old early return skipped normalization + both confinement checks. Now: strip the
+    // leading slash of /c:/x into c:/x, then fall through the SAME normalized path.
+    if (/^\/[a-zA-Z]:[\/]/.test(p)) p = p.slice(1);
+    // FIX (audit round-16/17: NORMALIZE, CHECK, and RETURN the normalized value) — the old
+    // code checked `np` but RETURNED raw `p`, so `/work/../etc/passwd` bypassed both gates.
+    const abs = p.startsWith("/");
+    const out: string[] = [];
+    for (const seg of p.split(/[\/\\]/)) {
+      if (seg === "" || seg === ".") continue;
+      if (seg === "..") { if (out.length > 0 && out[out.length - 1] !== "..") out.pop(); else out.push(".."); continue; }
+      out.push(seg);
+    }
+    const np = (abs ? "/" : "") + out.join("/");
     if (SYSTEM_DENY.test(np)) throw new Error(`PATH_REFUSED: ${np.slice(0, 60)}`);
     if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => np === r || np.startsWith(r.endsWith("/") ? r : r + "/"))) throw new Error(`PATH_OUTSIDE_ROOTS: ${np.slice(0, 60)}`);
-    return p;
+    return np;
   };
 
   const seq = new Map<string, number>();   // FIX (audit:133): the per-uri sequence guard
