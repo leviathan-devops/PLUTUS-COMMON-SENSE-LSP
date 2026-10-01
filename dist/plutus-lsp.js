@@ -1060,7 +1060,12 @@ var HERE = dirname2(fileURLToPath(import.meta.url));
 var FORENSIC = `${HERE}/../forensic`;
 try {
   mkdirSync(FORENSIC, { recursive: true });
-} catch {}
+} catch (e) {
+  try {
+    process.stderr.write(`FORENSIC_DIR_FAIL: ${e.message} \u2014 the receipt channel is DOWN
+`);
+  } catch {}
+}
 var RECEIPT = process.env.PLUTUS_LSP_RECEIPT ?? `${FORENSIC}/lsp-receipts.log`;
 function toDiagnostic(card, src, line = 0) {
   const lines = src.split(`
@@ -1124,7 +1129,12 @@ ${tail}
     try {
       if (existsSync2(LOG) && statSync2(LOG).size > 4 * 1024 * 1024)
         writeFileSync(LOG, "");
-    } catch {}
+    } catch (e) {
+      try {
+        process.stderr.write(`LOG_ROTATE_FAIL: ${e.message}
+`);
+      } catch {}
+    }
     try {
       process.stderr.write(`RECEIPT_ROTATED: ${size} -> ${statSync2(RECEIPT).size} bytes
 `);

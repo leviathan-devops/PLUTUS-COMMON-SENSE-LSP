@@ -26,7 +26,8 @@ import { fileCards, staleCard, PLUTUS_LSP_TOKENS, type FactCard } from "../src/p
 // spaces/unicode (%20) produced a wrong forensic dir.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FORENSIC = `${HERE}/../forensic`;
-try { mkdirSync(FORENSIC, { recursive: true }); } catch { /* best effort; receipt() reports failures */ }
+try { mkdirSync(FORENSIC, { recursive: true }); }
+catch (e) { try { process.stderr.write(`FORENSIC_DIR_FAIL: ${(e as Error).message} — the receipt channel is DOWN\n`); } catch { /* stderr gone too */ } }
 const RECEIPT = process.env.PLUTUS_LSP_RECEIPT ?? `${FORENSIC}/lsp-receipts.log`;
 // FIX F11 (audit-bravo): a bare catch{} swallows the failure. The receipt failure goes to stderr.
 /** ★ A card → an LSP Diagnostic. Mirrors gi-lsp.ts: `code` = the card shape (so a
@@ -83,7 +84,8 @@ function rotateReceipt(): void {
     } finally { closeSync(fd); }
     writeFileSync(RECEIPT, `--- RECEIPT ROTATED (12MB cap) ---\n${tail}\n`);
     // AUDIT-1b: the sibling stderr LOG had NO rotation at all — cap it too
-    try { if (existsSync(LOG) && statSync(LOG).size > 4 * 1024 * 1024) writeFileSync(LOG, ""); } catch { /* best effort */ }
+    try { if (existsSync(LOG) && statSync(LOG).size > 4 * 1024 * 1024) writeFileSync(LOG, ""); }
+    catch (e) { try { process.stderr.write(`LOG_ROTATE_FAIL: ${(e as Error).message}\n`); } catch { /* stderr gone */ } }
     try { process.stderr.write(`RECEIPT_ROTATED: ${size} -> ${statSync(RECEIPT).size} bytes\n`); } catch { /* stderr gone */ }
   } catch (e) {
     try { process.stderr.write(`RECEIPT_ROTATE_FAIL: ${(e as Error).message}\n`); } catch { /* stderr gone */ }
