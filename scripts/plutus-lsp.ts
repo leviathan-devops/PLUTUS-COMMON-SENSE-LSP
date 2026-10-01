@@ -255,8 +255,20 @@ if (process.argv.includes("--stdio")) {
     // NON_FILE_SCHEME-class refusal, never a path handed to loadStore.
     if (auth && auth.toLowerCase() !== "localhost") throw new Error(`NON_LOCAL_AUTHORITY: ${uri.slice(0, 60)}`);
     if (/^\/[a-zA-Z]:[\/]/.test(p)) return p.slice(1);                      // /c:/x -> c:/x
-    if (SYSTEM_DENY.test(p)) throw new Error(`PATH_REFUSED: ${p.slice(0, 60)}`);
-    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => p === r || p.startsWith(r.endsWith("/") ? r : r + "/"))) throw new Error(`PATH_OUTSIDE_ROOTS: ${p.slice(0, 60)}`);
+    // FIX (audit round-16: NORMALIZE first) — `/work/../etc/passwd` passed the raw prefix
+    // check. Collapse `.`/`..`/`//` before either the denylist or the allowlist test.
+    const np = (() => {
+      const abs = p.startsWith("/");
+      const out: string[] = [];
+      for (const seg of p.split("/")) {
+        if (seg === "" || seg === ".") continue;
+        if (seg === "..") { if (out.length > 0 && out[out.length - 1] !== "..") out.pop(); else out.push(".."); continue; }
+        out.push(seg);
+      }
+      return (abs ? "/" : "") + out.join("/");
+    })();
+    if (SYSTEM_DENY.test(np)) throw new Error(`PATH_REFUSED: ${np.slice(0, 60)}`);
+    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => np === r || np.startsWith(r.endsWith("/") ? r : r + "/"))) throw new Error(`PATH_OUTSIDE_ROOTS: ${np.slice(0, 60)}`);
     return p;
   };
 
@@ -440,8 +452,11 @@ if (process.argv.includes("--stdio")) {
         else text = good(openText) ? openText : docs.get(uri) ?? "";
         if (uri) { docs.set(uri, text); scheduleAnalyze(uri); }
       } else if (msg.method === "textDocument/didClose") {
-        const p = msg.params as { textDocument?: { uri?: string } } | undefined;
-        const uri = p?.textDocument?.uri ?? "";
+        const p = msg.params as { textDocument?: { uri?: unknown } } | undefined;
+        // round-16: same typeof guard as didOpen/didChange
+        const rawUri2 = p?.textDocument?.uri;
+        const uri = typeof rawUri2 === "string" ? rawUri2 : "";
+        if (uri === "") continue;
         docs.delete(uri);
         seq.delete(uri);   // FIX (audit:222): the per-uri seq entry is cleaned on close
         const pend = pending.get(uri);

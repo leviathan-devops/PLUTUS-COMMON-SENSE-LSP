@@ -163,12 +163,12 @@ function loadStore(startFile) {
   const entities = (Array.isArray(doc.entities) ? doc.entities : []).filter((e) => typeof e === "object" && e !== null && !Array.isArray(e));
   const relationships = (Array.isArray(doc.relationships) ? doc.relationships : []).filter((r) => typeof r === "object" && r !== null && !Array.isArray(r));
   const laws = entities.filter((e) => String(e.type ?? "") === "law" && String(e.id ?? "").trim().length > 0).map((e) => ({
-    id: String(e.id ?? ""),
-    name: String(e.name ?? e.id ?? ""),
+    id: String(e.id ?? "").trim(),
+    name: String(e.name ?? e.id ?? "").trim(),
     statement: String(e.statement ?? ""),
     tier: validTier(e.tier),
-    anchor: String(e.anchor ?? ""),
-    source: String(e.source ?? "")
+    anchor: String(e.anchor ?? "").trim(),
+    source: String(e.source ?? "").trim()
   }));
   return { root, l1Path, entities, relationships, laws, total: laws.length };
 }
@@ -232,7 +232,7 @@ async function readL2(socketPath, timeoutMs = 800) {
       }
       if (total < 4)
         return;
-      const head = Buffer.concat(chunks, Math.min(total, 4)).readUInt32BE(0);
+      const head = chunks[0].length >= 4 ? chunks[0].readUInt32BE(0) : Buffer.concat(chunks, 4).readUInt32BE(0);
       const need = 4 + head;
       if (need > 16 * 1024 * 1024 + 4) {
         finish({ ok: false, reason: `L2_FRAME_TOO_LARGE` });
@@ -321,10 +321,10 @@ function isStopword(t) {
   return STOPWORDS.has(t);
 }
 function wordRe(needle) {
-  const n = needle.trim().slice(0, 64);
-  if (!n)
+  const t = needle.trim();
+  if (!t || t.length > 64)
     return /(?!)/;
-  return new RegExp(`(^|[^a-z0-9])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
+  return new RegExp(`(^|[^a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
 }
 function tokensOf(name) {
   return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).map((t) => t.toLowerCase()).filter((t) => t.length >= 4 && !isStopword(t));
@@ -391,7 +391,11 @@ function callersOf(store, filePath) {
       if (seg.length === 0 || seg === ".")
         continue;
       if (seg === "..") {
-        acc.pop();
+        if (acc.length > 0 && acc[acc.length - 1] !== "..") {
+          acc.pop();
+        } else {
+          acc.push("..");
+        }
         continue;
       }
       acc.push(seg);
@@ -408,7 +412,9 @@ function callersOf(store, filePath) {
     const t = norm(r.target);
     if (!t)
       return false;
-    return t === fp || t.endsWith(`/${tail}`);
+    if (t === fp)
+      return true;
+    return fp.length >= t.length ? fp.endsWith(`/${t}`) : t.endsWith(`/${fp}`);
   });
   return [...new Set(hits.map((r) => String(r.source ?? "")).filter((x) => x.trim().length > 0))].sort().slice(0, 20);
 }
@@ -470,10 +476,11 @@ async function jevk5Fetch(state, questions, timeoutMs) {
   }
 }
 async function health(timeoutMs = 1500) {
+  const ms = typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 60000) : 1500;
   const errOf = (e) => e instanceof Error ? e.message : String(e);
   try {
     const ctl = new AbortController;
-    const t = setTimeout(() => ctl.abort(), timeoutMs);
+    const t = setTimeout(() => ctl.abort(), ms);
     try {
       const r = await fetch(jevk5Health(), { signal: ctl.signal });
       if (!r.ok)
@@ -515,7 +522,7 @@ async function chain(state, nodes = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], 
     return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const questions = {};
   for (const id of valid)
-    questions[id] = { type: "noul", instructions: id === "P4" && typeof p4Override === "string" && p4Override.length > 0 ? p4Override : CHAIN[id].q };
+    questions[id] = { type: "noul", instructions: id === "P4" && typeof p4Override === "string" && p4Override.trim().length > 0 ? p4Override : CHAIN[id].q };
   const res = await jevk5Fetch(state, questions, timeoutMs);
   if (!res.ok)
     return { ok: false, answers: {}, reason: res.reason, requests: 1 };
@@ -662,7 +669,7 @@ async function relevancePass(laws, filePath, hunk, timeoutMs = 20000) {
   const normPath = filePath.replace(/\\/g, "/").replace(/\/+$/, "");
   const segs = normPath.split("/").filter(Boolean);
   const subject = segs.length > 1 ? `${segs[segs.length - 2]}/${segs[segs.length - 1]}` : segs[0] ?? filePath;
-  const lines = judged.map((l, i) => `Candidate ${i + 1} [${l.tier}] ${l.name}: ${l.statement.slice(0, 160)}`).join(`
+  const lines = judged.map((l, i) => `Candidate ${i + 1} [${l.tier ?? "MUTABLE"}] ${l.name}: ${l.statement.slice(0, 160)}`).join(`
 `) + (dropped > 0 ? `
 ... [${dropped} more candidates truncated \u2014 never judged]` : "");
   const state = [
@@ -709,6 +716,7 @@ function partitionByRelevance(laws, rows) {
   const relevant = [];
   const rejected = [];
   const unknown = [];
+  const bar = relevanceT();
   let unmatched = 0;
   const placed = new Set;
   for (const r of rows) {
@@ -729,7 +737,7 @@ function partitionByRelevance(laws, rows) {
     const p = r.p;
     if (typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1)
       unknown.push(law);
-    else if (p >= relevanceT())
+    else if (p >= bar)
       relevant.push(law);
     else
       rejected.push({ law, p });
@@ -755,7 +763,7 @@ var PLUTUS_LSP_TOKENS = [
 var SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 };
 var cap = (v, n = 240) => {
   const t = typeof v === "string" ? v : v === null || v === undefined ? "" : String(v);
-  const flat = t.replace(/[\r\n\t\u0000-\u001f\u007f]+/g, " ");
+  const flat = t.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ");
   return flat.length > n ? `${flat.slice(0, n)}\u2026` : flat;
 };
 var srcOf = (law) => {
@@ -765,7 +773,7 @@ var srcOf = (law) => {
 function lawCard(kept, totalCandidates, judged) {
   if (!Array.isArray(kept) || kept.length === 0)
     return [];
-  const clean = kept.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string");
+  const clean = kept.filter((k) => k && k.law && typeof k.law.name === "string" && k.law.name.trim().length > 0 && typeof k.law.statement === "string" && k.law.statement.trim().length > 0);
   const tot = typeof totalCandidates === "number" && Number.isFinite(totalCandidates) && totalCandidates >= 0 ? Math.floor(totalCandidates) : 0;
   const n = clean.length;
   return clean.map(({ law, p }) => {
@@ -777,7 +785,7 @@ function lawCard(kept, totalCandidates, judged) {
       title: `${cap(law.name, 80)} \u2014 governs this code${judged ? ` (${prob}${of})` : " (lexical, no judge)"}`,
       rows: [
         `LAW: ${cap(law.statement, 400)}`,
-        `TIER: ${law.tier ?? "(tier missing)"}${law.tier === "IMMUTABLE" ? " \u2014 never change without a recorded ruling" : ""}`,
+        `TIER: ${cap(law.tier, 40) || "(tier missing)"}${law.tier === "IMMUTABLE" ? " \u2014 never change without a recorded ruling" : ""}`,
         `SOURCE: ${srcOf(law)}`,
         judged ? `JUDGE: ${prob}` : `LEXICAL: token match, not judged`
       ],
@@ -829,7 +837,7 @@ function verdictCard(v, kept, targetFile) {
   const EPS = 0.01;
   const topTied = finiteTop.length > 1 && Math.abs(finiteTop[0].p - finiteTop[1].p) < EPS;
   const attributed = finiteTop.length > 0 && !topTied;
-  const vecStr = Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ");
+  const vecStr = Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ") || "(empty)";
   const anchorFile = (() => {
     const strip = (v) => {
       if (typeof v !== "string")
@@ -851,7 +859,7 @@ function verdictCard(v, kept, targetFile) {
   if (effKind === "VIOLATION" && v.kind === "VIOLATION" && !vacuous) {
     return {
       shape: "VIOLATION",
-      title: `VIOLATION \u2014 this change contradicts ${cap(law.name, 80)} (${v.weakest}=${pct(weakScore)})`,
+      title: `VIOLATION \u2014 this change contradicts ${cap(law.name, 80)} (${cap(v.weakest, 16)}=${pct(weakScore)})`,
       rows: [
         `LAW: ${cap(law.statement, 400)}`,
         `SOURCE: ${srcOf(law)}`,
@@ -876,7 +884,7 @@ function verdictCard(v, kept, targetFile) {
   }
   return {
     shape: "SUSPECT",
-    title: `SUSPECT \u2014 ${cap(law.name, 80)} may be breached (${v.weakest ?? "none"}=${pct(v.weakest ? vector[v.weakest] : undefined)})${kindNote}; evidence required`,
+    title: `SUSPECT \u2014 ${cap(law.name, 80)} may be breached (${cap(v.weakest, 16) || "none"}=${pct(v.weakest ? vector[v.weakest] : undefined)})${kindNote}; evidence required`,
     rows: [`LAW: ${cap(law.statement, 400)}`, `SOURCE: ${srcOf(law)}`, `VECTOR: ${vecStr}`],
     severity: SEVERITY.Warning,
     source: "plutus/suspect",
@@ -904,7 +912,7 @@ function callersCard(callers) {
 }
 var staleCode = (raw, dflt = "PLUTUS_NO_STORE") => /^([A-Z][A-Z0-9_]*)/.exec(raw.trim())?.[1]?.slice(0, 32) ?? dflt;
 function staleCard(reason) {
-  const rs = typeof reason === "string" && reason.length > 0 ? reason : "PLUTUS_NO_STORE: unknown";
+  const rs = typeof reason === "string" && reason.trim().length > 0 ? reason : "PLUTUS_NO_STORE: unknown";
   const code = staleCode(rs);
   return {
     shape: "STALE",
@@ -1166,10 +1174,27 @@ ${j}`);
       throw new Error(`NON_LOCAL_AUTHORITY: ${uri.slice(0, 60)}`);
     if (/^\/[a-zA-Z]:[\/]/.test(p))
       return p.slice(1);
-    if (SYSTEM_DENY.test(p))
-      throw new Error(`PATH_REFUSED: ${p.slice(0, 60)}`);
-    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => p === r || p.startsWith(r.endsWith("/") ? r : r + "/")))
-      throw new Error(`PATH_OUTSIDE_ROOTS: ${p.slice(0, 60)}`);
+    const np = (() => {
+      const abs = p.startsWith("/");
+      const out = [];
+      for (const seg of p.split("/")) {
+        if (seg === "" || seg === ".")
+          continue;
+        if (seg === "..") {
+          if (out.length > 0 && out[out.length - 1] !== "..")
+            out.pop();
+          else
+            out.push("..");
+          continue;
+        }
+        out.push(seg);
+      }
+      return (abs ? "/" : "") + out.join("/");
+    })();
+    if (SYSTEM_DENY.test(np))
+      throw new Error(`PATH_REFUSED: ${np.slice(0, 60)}`);
+    if (ALLOWED_ROOTS.length > 0 && !ALLOWED_ROOTS.some((r) => np === r || np.startsWith(r.endsWith("/") ? r : r + "/")))
+      throw new Error(`PATH_OUTSIDE_ROOTS: ${np.slice(0, 60)}`);
     return p;
   };
   const seq = new Map;
@@ -1341,7 +1366,10 @@ ${j}`);
         }
       } else if (msg.method === "textDocument/didClose") {
         const p = msg.params;
-        const uri = p?.textDocument?.uri ?? "";
+        const rawUri2 = p?.textDocument?.uri;
+        const uri = typeof rawUri2 === "string" ? rawUri2 : "";
+        if (uri === "")
+          continue;
         docs.delete(uri);
         seq.delete(uri);
         const pend = pending.get(uri);

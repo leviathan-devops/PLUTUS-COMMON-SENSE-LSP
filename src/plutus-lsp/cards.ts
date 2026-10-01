@@ -47,7 +47,8 @@ export const SEVERITY = { Error: 1, Warning: 2, Information: 3, Hint: 4 } as con
 // (TDZ risk if ever called at module init). cap is defined first now.
 const cap = (v: unknown, n = 240): string => {
   const t = typeof v === "string" ? v : v === null || v === undefined ? "" : String(v);
-  const flat = t.replace(/[\r\n\t\u0000-\u001f\u007f]+/g, " ");
+  // FIX (round-16: strip C0 + C1 + DEL + unicode line/para separators + bidi controls)
+  const flat = t.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ");
   return flat.length > n ? `${flat.slice(0, n)}…` : flat;
 };
 
@@ -102,7 +103,9 @@ export function lawCard(kept: JudgedLaw[] | null | undefined, totalCandidates: n
   if (!Array.isArray(kept) || kept.length === 0) return [];        // the anti-phantom law: silence, not a card
   // FIX (audit: per-element guards + finite 0..1) — one malformed entry must not throw and lose
   // every card; Infinity is NOT a measured probability (it rendered as "Infinity" in a title).
-  const clean = kept.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string");
+  // FIX (round-16: whitespace-only name/statement rejected) — blank-subject cards violate the
+  // NAMES-THE-SUBJECT invariant. trim().length > 0, same bar as srcOf.
+  const clean = kept.filter((k) => k && k.law && typeof k.law.name === "string" && k.law.name.trim().length > 0 && typeof k.law.statement === "string" && k.law.statement.trim().length > 0);
   // FIX (audit round-11: count what was EMITTED) — `of`/`total` used unfiltered kept.length
   // while cards came from clean: one malformed entry made the card claim a count it did not
   // emit. Both now read clean.length.
@@ -121,7 +124,7 @@ export function lawCard(kept: JudgedLaw[] | null | undefined, totalCandidates: n
         `LAW: ${cap(law.statement, 400)}`,
         // FIX (audit round-11: tier/anchor fallbacks) — clean only checks name/statement, so a
         // corrupt store rendered `TIER: undefined` / `SOURCE: undefined`. Named fallbacks now.
-        `TIER: ${law.tier ?? "(tier missing)"}${law.tier === "IMMUTABLE" ? " — never change without a recorded ruling" : ""}`,
+        `TIER: ${cap(law.tier, 40) || "(tier missing)"}${law.tier === "IMMUTABLE" ? " — never change without a recorded ruling" : ""}`,
         `SOURCE: ${srcOf(law)}`,
         // FIX (audit: lexical path mislabeled) — when no judge ran, the row says LEXICAL,
         // never a probability (traceability: a number must come from the model that ran it)
@@ -212,7 +215,7 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
 
   // FIX (audit round-15: the vector is bounded too) — a hostile caller's huge vector made an
   // unbounded row. Cap to 8 entries and cap each key.
-  const vecStr = Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ");
+  const vecStr = Object.entries(vector).slice(0, 8).map(([k, n]) => `${cap(k, 16)}=${pct(n)}`).join("  ") || "(empty)";
   // FIX (audit: strip file:line:col in one pass) — `src/foo.ts:10:5` must become a clean path,
   // not `src/foo.ts:10`. Windows drive paths (C:\...) survive.
   // FIX (audit round-12: anchorFile normalized) — an empty-string targetFile survived `??`
@@ -246,7 +249,7 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   if (effKind === "VIOLATION" && v.kind === "VIOLATION" && !vacuous) {
     return {
       shape: "VIOLATION",
-      title: `VIOLATION — this change contradicts ${cap(law.name, 80)} (${v.weakest}=${pct(weakScore)})`,
+      title: `VIOLATION — this change contradicts ${cap(law.name, 80)} (${cap(v.weakest, 16)}=${pct(weakScore)})`,
       rows: [
         `LAW: ${cap(law.statement, 400)}`,
         // FIX (audit round-13: verdict rows share the fallback) — lawCard had it, the verdict
@@ -279,7 +282,7 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   // at two severities.
   return {
     shape: "SUSPECT",
-    title: `SUSPECT — ${cap(law.name, 80)} may be breached (${v.weakest ?? "none"}=${pct(v.weakest ? vector[v.weakest as keyof typeof vector] : undefined)})${kindNote}; evidence required`,
+    title: `SUSPECT — ${cap(law.name, 80)} may be breached (${cap(v.weakest, 16) || "none"}=${pct(v.weakest ? vector[v.weakest as keyof typeof vector] : undefined)})${kindNote}; evidence required`,
     rows: [`LAW: ${cap(law.statement, 400)}`, `SOURCE: ${srcOf(law)}`, `VECTOR: ${vecStr}`],
     severity: SEVERITY.Warning,
     source: "plutus/suspect",
@@ -323,7 +326,7 @@ export function staleCard(reason: string | null | undefined): FactCard {
   // losing EVERY card for the file. A refusal path must never throw.
   // FIX (audit round-13: code allowlisted + capped) — the raw split let `:...` yield an
   // empty code and unbounded model prose pollute the filterable title. Same bar as JUDGE_DOWN.
-  const rs = typeof reason === "string" && reason.length > 0 ? reason : "PLUTUS_NO_STORE: unknown";
+  const rs = typeof reason === "string" && reason.trim().length > 0 ? reason : "PLUTUS_NO_STORE: unknown";
   const code = staleCode(rs);
   return {
     shape: "STALE",

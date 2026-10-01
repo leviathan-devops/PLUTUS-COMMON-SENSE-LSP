@@ -99,10 +99,13 @@ export async function jevk5Fetch(
 
 /** The health probe. Absent → the NAMED JEVK5_DOWN (never a fabricated noul). */
 export async function health(timeoutMs = 1500): Promise<{ ok: boolean; reason?: string }> {
+  // FIX (audit round-16: the health timeout is clamped) — 0/negative/NaN aborted instantly
+  // (a false JEVK5_DOWN) and Infinity hung the probe. Same clamp as jevk5Fetch.
+  const ms = typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, 60000) : 1500;
   const errOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));   // FIX (audit: instanceof fallback)
   try {
     const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), timeoutMs);
+    const t = setTimeout(() => ctl.abort(), ms);
     try {
       const r = await fetch(jevk5Health(), { signal: ctl.signal });
       if (!r.ok) return { ok: false, reason: `${JEVK5_DOWN}: health HTTP ${r.status}` };
@@ -148,7 +151,7 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
   if (valid.length + invalid.length < nodes.length) note(`CHAIN deduped ${nodes.length} → ${valid.length + invalid.length} (duplicates collapsed)`);
   if (valid.length === 0) return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const questions: Record<string, { type: "noul"; instructions: string }> = {};
-  for (const id of valid) questions[id] = { type: "noul", instructions: id === "P4" && typeof p4Override === "string" && p4Override.length > 0 ? p4Override : CHAIN[id].q };
+  for (const id of valid) questions[id] = { type: "noul", instructions: id === "P4" && typeof p4Override === "string" && p4Override.trim().length > 0 ? p4Override : CHAIN[id].q };
 
   // FIX (audit: chain reuses jevk5Fetch) — the old body reimplemented AbortController+fetch+
   // [0,1] validation inline and had already drifted (entries-loop vs per-node loop, different
@@ -435,7 +438,7 @@ export async function relevancePass(
   const segs = normPath.split("/").filter(Boolean);
   const subject = segs.length > 1 ? `${segs[segs.length - 2]}/${segs[segs.length - 1]}` : (segs[0] ?? filePath);
   const lines = judged
-    .map((l, i) => `Candidate ${i + 1} [${l.tier}] ${l.name}: ${l.statement.slice(0, 160)}`)
+    .map((l, i) => `Candidate ${i + 1} [${l.tier ?? "MUTABLE"}] ${l.name}: ${l.statement.slice(0, 160)}`)
     .join("\n") + (dropped > 0 ? `\n... [${dropped} more candidates truncated — never judged]` : "");
   const state = [
     `FILE BEING WRITTEN: ${subject}`,
@@ -497,6 +500,7 @@ export function partitionByRelevance(
   const relevant: LawEntity[] = [];
   const rejected: Array<{ law: LawEntity; p: number }> = [];
   const unknown: LawEntity[] = [];
+  const bar = relevanceT();   // round-16: one bar for the whole partition (env cannot change mid-loop)
   let unmatched = 0;
   const placed = new Set<string>();   // round-15: a duplicate lawId row cannot double-place
   for (const r of rows) {
@@ -516,7 +520,7 @@ export function partitionByRelevance(
     // FIX (audit round-15: the upper bound too) — p=5 passed `p>=relevanceT()` and became
     // relevant (fail-open). Only a finite [0,1] partitions; anything else is UNREADABLE.
     if (typeof p !== "number" || !Number.isFinite(p) || p < 0 || p > 1) unknown.push(law);
-    else if (p >= relevanceT()) relevant.push(law); else rejected.push({ law, p });
+    else if (p >= bar) relevant.push(law); else rejected.push({ law, p });
   }
   if (unmatched > 0) { try { receipt(`PARTITION unmatched=${unmatched}/${rows.length} rows (stale or hallucinated lawId)`); } catch { /* best-effort */ } }
   return { relevant, rejected, unknown };

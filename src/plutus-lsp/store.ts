@@ -228,13 +228,15 @@ export function loadStore(startFile: string): Store {
   // is silently dropped). Drop them at load with a loud reason instead of a silent merge.
   const laws: LawEntity[] = entities
     .filter((e) => String(e.type ?? "") === "law" && String(e.id ?? "").trim().length > 0)
+    // FIX (audit round-16: identity fields TRIMMED) — an id like `  IRON-01  ` passed the
+    // filter yet broke dedupe keys + wordRe matching. Trim the identity fields.
     .map((e) => ({
-      id: String(e.id ?? ""),
-      name: String(e.name ?? e.id ?? ""),
+      id: String(e.id ?? "").trim(),
+      name: String(e.name ?? e.id ?? "").trim(),
       statement: String(e.statement ?? ""),
       tier: validTier(e.tier),
-      anchor: String(e.anchor ?? ""),
-      source: String(e.source ?? ""),
+      anchor: String(e.anchor ?? "").trim(),
+      source: String(e.source ?? "").trim(),
     }));
   return { root, l1Path, entities, relationships, laws, total: laws.length };
 }
@@ -317,7 +319,9 @@ export async function readL2(socketPath: string, timeoutMs = 800): Promise<L2Res
       // data event just to read the 4-byte prefix (O(n²) to the cap). The prefix is read from
       // the first 4 bytes once buffered; the full concat runs only when the frame is complete.
       if (total < 4) return;
-      const head = Buffer.concat(chunks, Math.min(total, 4)).readUInt32BE(0);
+      // round-16: read the 4-byte prefix WITHOUT concat (chunks[0] is >= 4 bytes in practice;
+      // only concat the tiny head when it straddles chunks)
+      const head = chunks[0].length >= 4 ? chunks[0].readUInt32BE(0) : Buffer.concat(chunks, 4).readUInt32BE(0);
       const need = 4 + head;
       if (need > 16 * 1024 * 1024 + 4) { finish({ ok: false, reason: `L2_FRAME_TOO_LARGE` }); return; }
       if (total < need) return;
@@ -371,9 +375,9 @@ export function isStopword(t: string): boolean { return STOPWORDS.has(t); }
 export function wordRe(needle: string): RegExp {
   // FIX (audit: needle guard) — an empty needle matches almost everything; a multi-KB needle
   // builds a multi-KB regex (ReDoS/CPU). Cap at 64 chars; empty never matches.
-  const n = needle.trim().slice(0, 64);
-  if (!n) return /(?!)/
-  return new RegExp(`(^|[^a-z0-9])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
+  const t = needle.trim();
+  if (!t || t.length > 64) return /(?!)/
+  return new RegExp(`(^|[^a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
 }
 
 /** Split an identifier into lowercase tokens (camelCase + snake_case), dropping the generic ones. */
@@ -501,7 +505,7 @@ export function callersOf(store: Store, filePath: string): string[] {
     const acc: string[] = [];
     for (const seg of String(p ?? "").replace(/\\/g, "/").split("/")) {
       if (seg.length === 0 || seg === ".") continue;
-      if (seg === "..") { acc.pop(); continue; }
+      if (seg === "..") { if (acc.length > 0 && acc[acc.length - 1] !== "..") { acc.pop(); } else { acc.push(".."); } continue; }
       acc.push(seg);
     }
     return acc.join("/");
@@ -513,12 +517,12 @@ export function callersOf(store: Store, filePath: string): string[] {
     if (r.type !== "imports") return false;
     const t = norm(r.target);
     if (!t) return false;
-    // FIX (audit round-14: the conjunction was redundant) — t.endsWith('/'+tail) already
-    // implies t.endsWith(tail); the first clause added nothing. One boundary match.
-    // NOTE (adjudicated): the direction is CORRECT as-is — the graph's targets are FULL
-    // relative paths (e.g. sources/bible40.md) and fp is the full file path; the TARGET must
-    // end with the FILE (the importer points AT this file), never the reverse.
-    return t === fp || t.endsWith(`/${tail}`);
+    // FIX (audit round-16: BOTH directions) — when fp is absolute (/home/.../src/foo.ts) and
+    // the graph target is repo-relative (src/foo.ts), the old one-way suffix never matched.
+    // Now the shorter of the two must be a segment-bounded suffix of the longer.
+    if (t === fp) return true;
+    return fp.length >= t.length ? fp.endsWith(`/${t}`) : t.endsWith(`/${fp}`);
+
   });
   // FIX (audit round-11: deterministic order) — sort before slicing so the same graph
   // always yields the same callers.
