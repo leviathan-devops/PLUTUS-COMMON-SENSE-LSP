@@ -8,7 +8,7 @@ You are resuming PLUTUS-COMMON-SENSE-LSP. Read, in order:
 5. `packages/plutus-common-sense-lsp/` — the DPL1 + the wave-plan.
 
 ## THE STATE IN ONE LINE
-The server is BUILT + REGISTERED + TESTED (26 pass, 4 live selftests, bundle 51f95e841cf6247f);
+The server is BUILT + REGISTERED + TESTED (26 pass, 4 live selftests, bundle 3307a3b7a14d6f4b);
 the calibration bar is DERIVED (0.30); the round-11 audit re-run + the live-TUI render proof +
 the checkpoint seal are the remaining gates.
 

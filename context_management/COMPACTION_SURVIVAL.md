@@ -16,7 +16,7 @@ L1 1277 docs + 564 laws / 1141 rels · L2 1323/1162 · JevK5-4b-v0.2-Q8_0 on :80
 
 ## THE WAVES (the state)
 W1-W6: all built + gated. Round-9/10: 21 findings closed. The battery: 26 pass / 0 fail / 117 expects.
-The bundle: dist/plutus-lsp.js 51f95e841cf6247f. The ship docs: 6 current + THEATRICALITY_LOG.
+The bundle: dist/plutus-lsp.js 3307a3b7a14d6f4b. The ship docs: 6 current + THEATRICALITY_LOG.
 
 ## THE OPEN GATES
 The round-11 audit re-run (the lane :4097 is down — BLOCKED, not PASS). The live-TUI render
