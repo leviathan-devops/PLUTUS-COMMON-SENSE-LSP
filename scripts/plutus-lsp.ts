@@ -65,7 +65,9 @@ setInterval(receiptFlush, 500).unref?.();
 // 12MB file and APPENDED the tail back to it: the size grew monotonically. Now: the tail is
 // read with a BOUNDED window (the last ~256KB), then the file is TRUNCATED (writeFileSync
 // REPLACES) so the cap holds.
-const receipt = (line: string) => { receiptBuf.push(`${new Date().toISOString()} ${clean(line)}\n`); if (receiptBuf.length > 200) receiptFlush(); };
+// SEC-H3 FIX — attacker-controlled method/uri/file strings entered the receipt UNCAPPED (a
+// 30MB method x 7 frames retained ~200MB and defeated the rotation). ONE choke point caps it.
+const receipt = (line: string) => { receiptBuf.push(`${new Date().toISOString()} ${clean(String(line).slice(0, 512))}\n`); if (receiptBuf.length > 200) receiptFlush(); };
 // F-9 (round-21: LOUD + callable) — the first two cuts were silent (a swallowed exception
 // left the growth undetected). The rotation is now a function: it runs at import AND before
 // every exit, and it reports its outcome to stderr (never silently best-effort).
@@ -100,7 +102,8 @@ const LOG = process.env.PLUTUS_LSP_LOG ?? `${FORENSIC}/lsp-stderr.log`;
 const clean = (m: string) => m.replace(/[\r\n]+/g, " ");
 // FIX (audit: log mirrors failures to stderr like receipt() does) — a full/ro forensic dir
 // must not lose all observability silently.
-const log = (m: string) => { try { appendFileSync(LOG, `${new Date().toISOString()} ${clean(m)}\n`); } catch (e) { try { process.stderr.write(`LOG_WRITE_FAIL: ${(e as Error).message}\n`); } catch {} } };
+// SEC-H3: the same cap on the stderr sink (a hostile 30MB line must not blow the log either)
+const log = (m: string) => { try { appendFileSync(LOG, `${new Date().toISOString()} ${clean(String(m).slice(0, 512))}\n`); } catch (e) { try { process.stderr.write(`LOG_WRITE_FAIL: ${(e as Error).message}\n`); } catch {} } };
 
 // ── THE PIPELINE (one file → the cards) ──────────────────────────────────────
 export interface PipelineResult { tokens: string[]; cards: import("../src/plutus-lsp/cards.ts").FactCard[]; refused: string | null; vector: Record<string, number>; relevance?: Array<{ lawId: string; p: number }> }
@@ -445,7 +448,17 @@ if (process.argv.includes("--stdio")) {
   // FIX (audit: MAX_STDIN was READ but never DECLARED — ReferenceError on the oversize
   // path). One cap for the whole stdin buffer, shared by the separator check and the frame check.
   const MAX_STDIN = 32 * 1024 * 1024;
+  // SEC-M3 FIX — a claimed-large Content-Length + a byte trickle pinned up to 32MB in buf
+  // FOREVER (no timeliness gate). A 30s idle sweep resets a partial frame that made no progress.
+  let lastProgress = Date.now();
+  setInterval(() => {
+    if (buf.length > 0 && Date.now() - lastProgress > 30000) {
+      log(`STDIN_IDLE_RESET: ${buf.length} partial bytes — no complete frame in 30s`);
+      buf = Buffer.alloc(0);
+    }
+  }, 5000).unref?.();
   process.stdin.on("data", (c: Buffer) => {
+    lastProgress = Date.now();
     // FIX (audit round-12: framing hardened) — the old path concat-per-chunk (O(n^2)), ran the
     // Content-Length regex on an unbounded header, and duplicated the 32MB literal instead of
     // MAX_STDIN. Now: an over-cap pre-check resets LOUDLY before concat; the literal is MAX_STDIN.
@@ -464,9 +477,9 @@ if (process.argv.includes("--stdio")) {
       if (head < 0) break;
       // FIX (audit round-15: the header scan is CAPPED) — the regex ran on up to 32MB per
       // iteration. A >4KB header block is malformed; skip it (drain past the separator).
-      if (head > 4096) { log(`FRAME_SKIP: header ${head} bytes exceeds 4KB — skipping`); buf = buf.subarray(head + 4); continue; }
+      if (head > 4096) { log(`FRAME_SKIP: header ${head} bytes exceeds 4KB — skipping`); { const rest = buf.subarray(head + 4); buf = rest.length > 0 ? Buffer.from(rest) : Buffer.alloc(0); } continue; }
       const m = /Content-Length:\s*(\d+)/i.exec(buf.subarray(0, head).toString("ascii"));
-      if (!m) { log("FRAME_SKIP: header without Content-Length"); buf = buf.subarray(head + 4); continue; }
+      if (!m) { log("FRAME_SKIP: header without Content-Length"); { const rest = buf.subarray(head + 4); buf = rest.length > 0 ? Buffer.from(rest) : Buffer.alloc(0); } continue; }
       const n = parseInt(m[1], 10);
       // FIX (audit:106 + drain-first): a malformed header must not mis-slice / OOM — and the
       // cap must not silently discard a partial valid frame. Complete frames are drained
@@ -576,6 +589,14 @@ if (process.argv.includes("--stdio")) {
         // every debounced keystroke ran regex+tokenization over the WHOLE text on one thread.
         // Cap the stored text (the head is what the detector scans; the truncation is receipted).
         const MAX_DOC_BYTES = 1 * 1024 * 1024;
+        // SEC-M1 FIX — the per-doc BYTES were capped but the COUNT was not: 5000 didOpen frames
+        // (never closed) grew docs/seq/pending/inFlight/dirty without bound. 256 open docs is far
+        // past any real editing session; the oldest is evicted loudly.
+        const MAX_OPEN_DOCS = 256;
+        if (docs.size >= MAX_OPEN_DOCS && !docs.has(uri)) {
+          const oldest = docs.keys().next().value;
+          if (oldest) { docs.delete(oldest); seq.delete(oldest); inFlight.delete(oldest); dirty.delete(oldest); const pt = pending.get(oldest); if (pt) { clearTimeout(pt); pending.delete(oldest); } receipt(`DOC_EVICTED ${oldest} (open-doc cap ${MAX_OPEN_DOCS})`); }
+        }
         if (uri) {
           const stored = text.length > MAX_DOC_BYTES ? (receipt(`DOC_TRUNCATED ${uri}: ${text.length} -> ${MAX_DOC_BYTES} bytes`), text.slice(0, MAX_DOC_BYTES)) : text;
           docs.set(uri, stored);

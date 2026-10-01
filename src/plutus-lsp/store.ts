@@ -176,6 +176,10 @@ function lawCount(p: string): number {
 }
 function lawCountUncached(p: string): number {
   try {
+    // SEC-H1 FIX — the pre-filter read the WHOLE candidate kg.json with no cap, on the hot
+    // discovery path (local + 12 ancestors + known paths per resolve). A 2GB planted kg.json
+    // OOM'd the server BEFORE loadStore's 16MB gate ever ran. Same gate here.
+    if (statSync(p).size > 16 * 1024 * 1024) return -1;
     const d = JSON.parse(readFileSync(p, "utf8")) as { entities?: unknown };
     const ents = Array.isArray((d as { entities?: unknown[] }).entities) ? (d as { entities: unknown[] }).entities : [];
     return ents.filter((e) => String((e as Record<string, unknown>)?.type ?? "") === "law").length;
@@ -338,13 +342,16 @@ export function loadStore(startFile: string): Store {
     .filter((e) => String(e.type ?? "") === "law" && String(e.id ?? "").trim().length > 0)
     // FIX (audit round-16: identity fields TRIMMED) — an id like `  IRON-01  ` passed the
     // filter yet broke dedupe keys + wordRe matching. Trim the identity fields.
+    // SEC-M2 FIX — the identity fields were trimmed but statement/anchor/source were NOT
+    // length-capped: a hostile 8MB statement made every keystroke tokenize 8MB x laws x needles
+    // on one thread (the detector pays full price BEFORE the downstream card cap). Bounded at load.
     .map((e) => ({
-      id: String(e.id ?? "").trim(),
-      name: String(e.name ?? e.id ?? "").trim(),
-      statement: String(e.statement ?? ""),
+      id: String(e.id ?? "").trim().slice(0, 256),
+      name: String(e.name ?? e.id ?? "").trim().slice(0, 256),
+      statement: String(e.statement ?? "").slice(0, 4000),
       tier: validTier(e.tier),
-      anchor: String(e.anchor ?? "").trim(),
-      source: String(e.source ?? "").trim(),
+      anchor: String(e.anchor ?? "").trim().slice(0, 512),
+      source: String(e.source ?? "").trim().slice(0, 512),
     }));
   return { root, l1Path, entities, relationships, laws, total: laws.length };
 }

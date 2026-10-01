@@ -75,6 +75,11 @@ export async function jevk5Fetch(
       signal: ctl.signal,
     });
     if (!r.ok) return { ok: false, reason: `${JEVK5_DOWN}: HTTP ${r.status}` };
+    // SEC-H2 FIX — the judge response was parsed with NO byte cap and its answers object walked
+    // with NO key cap: a hostile/buggy judge (500MB body, or 1M keys) OOM'd the LSP hot path.
+    // Content-Length is checked first; the key count + key length are bounded before the walk.
+    const cl = Number(r.headers.get("content-length") ?? "0");
+    if (Number.isFinite(cl) && cl > 256 * 1024) return { ok: false, reason: `${JEVK5_DOWN}: response too large (${cl} bytes)` };
     const j = (await r.json()) as { answers?: Record<string, { noul?: unknown }>; latency_ms?: number } | null;
     if (!j || typeof j !== "object") return { ok: false, reason: `${JEVK5_DOWN}: malformed body` };
     // FIX (audit: answers must be a PLAIN object) — `?? {}` masked a missing/invalid field as
@@ -83,8 +88,13 @@ export async function jevk5Fetch(
     const raw = (j as { answers?: unknown }).answers;
     if (raw === undefined) return { ok: false, reason: `${JEVK5_DOWN}: missing answers field` };
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, reason: `${JEVK5_DOWN}: answers is ${Array.isArray(raw) ? "an array" : typeof raw}` };
+    // SEC-H2 FIX (the walk is BOUNDED) — 64 answers is far above any real chain (7) or relevance
+    // batch (12); a million-key object is malformed, not a judgment.
+    const rawEntries = Object.entries(raw as Record<string, { noul?: unknown }>);
+    if (rawEntries.length > 64) return { ok: false, reason: `${JEVK5_DOWN}: answers has ${rawEntries.length} keys (malformed)` };
     const answers: Record<string, number> = {};
-    for (const [k, a] of Object.entries(raw as Record<string, { noul?: unknown }>)) {
+    for (const [k, a] of rawEntries) {
+      if (k.length > 64) continue;
       const v = (a as { noul?: unknown } | undefined)?.noul;
       if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1) answers[k] = v;
     }
@@ -115,7 +125,10 @@ export async function health(timeoutMs = 1500): Promise<{ ok: boolean; reason?: 
       if (Array.isArray(j)) return { ok: false, reason: `${JEVK5_DOWN}: health body is an array` };
       if (!j || typeof j !== "object") return { ok: false, reason: `${JEVK5_DOWN}: health body is ${typeof j}` };
       const ok = (j as { ok?: unknown }).ok;
-      return ok === true ? { ok: true } : { ok: false, reason: `${JEVK5_DOWN}: health says ${JSON.stringify(j).slice(0, 120)}` };
+      // SEC-L2 FIX — `JSON.stringify(j).slice(0,120)` serialized the WHOLE hostile body first.
+    // A bounded inspect: the top-level keys + ok, never a full serialize.
+    const keys = Object.keys(j as object).slice(0, 8).join(",");
+    return ok === true ? { ok: true } : { ok: false, reason: `${JEVK5_DOWN}: health says {${keys}}` };
     } finally { clearTimeout(t); }   // FIX (audit judge.ts:42): cleared on EVERY path
   } catch (e) {
     return { ok: false, reason: `${JEVK5_DOWN}: ${errOf(e)}` };
@@ -197,7 +210,9 @@ export function buildState(target: string, laws: LawEntity[], hunk: string): str
   const kept = ordered.slice(0, 6);
   // FIX (audit round-15: tier/anchor defaulted) — a law without them emitted `[undefined]`
   // and `(anchor undefined)` INTO the model's evidence text. Named fallbacks.
-  const lawText = kept.map((l) => `[${l.tier ?? "MUTABLE"}] ${l.name}: ${l.statement} (anchor ${l.anchor ?? "unknown"})`).join("\n")
+  // SEC-L3 FIX — the 4000-char cap lived in chain(), one call UP: the transient was built at
+  // full hostile size first. Bound at the interpolation site.
+  const lawText = kept.map((l) => `[${l.tier ?? "MUTABLE"}] ${String(l.name).slice(0, 160)}: ${String(l.statement).slice(0, 500)} (anchor ${String(l.anchor ?? "unknown").slice(0, 200)})`).join("\n")
     + (laws.length > kept.length ? `\n... [${laws.length - kept.length} more laws truncated]` : "");
   return [
     `TARGET FILE: ${target}`,

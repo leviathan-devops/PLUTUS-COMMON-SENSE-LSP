@@ -415,3 +415,28 @@ test("A44_pull_never_false_clean (the audit's false-clean)", async () => {
   expect(server).toContain("analysis in progress");   // an error, never items:[]
   expect(server).toContain("MAX_DOC_BYTES");
 });
+
+test("A45_security_caps_present (the security auditor's 10)", async () => {
+  const fs = await import("node:fs");
+  const store = fs.readFileSync(`${import.meta.dir}/../src/plutus-lsp/store.ts`, "utf8");
+  const judge = fs.readFileSync(`${import.meta.dir}/../src/plutus-lsp/judge.ts`, "utf8");
+  const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
+  // H1: the law-count pre-filter has the size gate
+  expect(store).toContain("statSync(p).size > 16 * 1024 * 1024");
+  // M2: the law text is capped at load
+  expect(store).toContain('.slice(0, 4000)');
+  // H2: the judge response is byte- and key-capped
+  expect(judge).toContain("response too large");
+  expect(judge).toContain("keys (malformed)");
+  // H3: the receipt + log lines are capped at the choke point
+  expect(server).toContain("clean(String(line).slice(0, 512))");
+  // M1: the open-doc table is bounded
+  expect(server).toContain("MAX_OPEN_DOCS");
+  // M3: the stdin idle sweep exists
+  expect(server).toContain("STDIN_IDLE_RESET");
+  // L1: every skip path copies
+  expect((server.match(/Buffer\.from\(rest\)/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  // L2/L3: the bounded stringify + the capped interpolation
+  expect(judge).toContain("Object.keys(j as object).slice(0, 8)");
+  expect(judge).toContain("String(l.statement).slice(0, 500)");
+});

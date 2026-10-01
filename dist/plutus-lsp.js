@@ -107,6 +107,8 @@ function lawCount(p) {
 }
 function lawCountUncached(p) {
   try {
+    if (statSync(p).size > 16 * 1024 * 1024)
+      return -1;
     const d = JSON.parse(readFileSync(p, "utf8"));
     const ents = Array.isArray(d.entities) ? d.entities : [];
     return ents.filter((e) => String(e?.type ?? "") === "law").length;
@@ -241,12 +243,12 @@ function loadStore(startFile) {
   const entities = (Array.isArray(doc.entities) ? doc.entities : []).filter((e) => typeof e === "object" && e !== null && !Array.isArray(e));
   const relationships = (Array.isArray(doc.relationships) ? doc.relationships : []).filter((r) => typeof r === "object" && r !== null && !Array.isArray(r));
   const laws = entities.filter((e) => String(e.type ?? "") === "law" && String(e.id ?? "").trim().length > 0).map((e) => ({
-    id: String(e.id ?? "").trim(),
-    name: String(e.name ?? e.id ?? "").trim(),
-    statement: String(e.statement ?? ""),
+    id: String(e.id ?? "").trim().slice(0, 256),
+    name: String(e.name ?? e.id ?? "").trim().slice(0, 256),
+    statement: String(e.statement ?? "").slice(0, 4000),
     tier: validTier(e.tier),
-    anchor: String(e.anchor ?? "").trim(),
-    source: String(e.source ?? "").trim()
+    anchor: String(e.anchor ?? "").trim().slice(0, 512),
+    source: String(e.source ?? "").trim().slice(0, 512)
   }));
   return { root, l1Path, entities, relationships, laws, total: laws.length };
 }
@@ -531,6 +533,9 @@ async function jevk5Fetch(state, questions, timeoutMs) {
     });
     if (!r.ok)
       return { ok: false, reason: `${JEVK5_DOWN}: HTTP ${r.status}` };
+    const cl = Number(r.headers.get("content-length") ?? "0");
+    if (Number.isFinite(cl) && cl > 256 * 1024)
+      return { ok: false, reason: `${JEVK5_DOWN}: response too large (${cl} bytes)` };
     const j = await r.json();
     if (!j || typeof j !== "object")
       return { ok: false, reason: `${JEVK5_DOWN}: malformed body` };
@@ -539,8 +544,13 @@ async function jevk5Fetch(state, questions, timeoutMs) {
       return { ok: false, reason: `${JEVK5_DOWN}: missing answers field` };
     if (!raw || typeof raw !== "object" || Array.isArray(raw))
       return { ok: false, reason: `${JEVK5_DOWN}: answers is ${Array.isArray(raw) ? "an array" : typeof raw}` };
+    const rawEntries = Object.entries(raw);
+    if (rawEntries.length > 64)
+      return { ok: false, reason: `${JEVK5_DOWN}: answers has ${rawEntries.length} keys (malformed)` };
     const answers = {};
-    for (const [k, a] of Object.entries(raw)) {
+    for (const [k, a] of rawEntries) {
+      if (k.length > 64)
+        continue;
       const v = a?.noul;
       if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1)
         answers[k] = v;
@@ -569,7 +579,8 @@ async function health(timeoutMs = 1500) {
       if (!j || typeof j !== "object")
         return { ok: false, reason: `${JEVK5_DOWN}: health body is ${typeof j}` };
       const ok = j.ok;
-      return ok === true ? { ok: true } : { ok: false, reason: `${JEVK5_DOWN}: health says ${JSON.stringify(j).slice(0, 120)}` };
+      const keys = Object.keys(j).slice(0, 8).join(",");
+      return ok === true ? { ok: true } : { ok: false, reason: `${JEVK5_DOWN}: health says {${keys}}` };
     } finally {
       clearTimeout(t);
     }
@@ -631,7 +642,7 @@ function buildState(target, laws, hunk) {
   laws = Array.isArray(laws) ? laws.filter((l) => l && typeof l.name === "string" && typeof l.statement === "string") : [];
   const ordered = prioritizeImmutable(laws);
   const kept = ordered.slice(0, 6);
-  const lawText = kept.map((l) => `[${l.tier ?? "MUTABLE"}] ${l.name}: ${l.statement} (anchor ${l.anchor ?? "unknown"})`).join(`
+  const lawText = kept.map((l) => `[${l.tier ?? "MUTABLE"}] ${String(l.name).slice(0, 160)}: ${String(l.statement).slice(0, 500)} (anchor ${String(l.anchor ?? "unknown").slice(0, 200)})`).join(`
 `) + (laws.length > kept.length ? `
 ... [${laws.length - kept.length} more laws truncated]` : "");
   return [
@@ -1099,7 +1110,7 @@ var receiptFlush = () => {
 };
 setInterval(receiptFlush, 500).unref?.();
 var receipt2 = (line) => {
-  receiptBuf.push(`${new Date().toISOString()} ${clean(line)}
+  receiptBuf.push(`${new Date().toISOString()} ${clean(String(line).slice(0, 512))}
 `);
   if (receiptBuf.length > 200)
     receiptFlush();
@@ -1152,7 +1163,7 @@ var LOG = process.env.PLUTUS_LSP_LOG ?? `${FORENSIC}/lsp-stderr.log`;
 var clean = (m) => m.replace(/[\r\n]+/g, " ");
 var log = (m) => {
   try {
-    appendFileSync(LOG, `${new Date().toISOString()} ${clean(m)}
+    appendFileSync(LOG, `${new Date().toISOString()} ${clean(String(m).slice(0, 512))}
 `);
   } catch (e) {
     try {
@@ -1460,7 +1471,15 @@ ${j}`);
     exitFlushed(1);
   });
   const MAX_STDIN = 32 * 1024 * 1024;
+  let lastProgress = Date.now();
+  setInterval(() => {
+    if (buf.length > 0 && Date.now() - lastProgress > 30000) {
+      log(`STDIN_IDLE_RESET: ${buf.length} partial bytes \u2014 no complete frame in 30s`);
+      buf = Buffer.alloc(0);
+    }
+  }, 5000).unref?.();
   process.stdin.on("data", (c) => {
+    lastProgress = Date.now();
     if (buf.length + c.length > MAX_STDIN + 65536) {
       log(`STDIN_OVERSIZE_RESET: ${buf.length + c.length} bytes \u2014 resetting`);
       buf = Buffer.alloc(0);
@@ -1482,13 +1501,19 @@ ${j}`);
         break;
       if (head > 4096) {
         log(`FRAME_SKIP: header ${head} bytes exceeds 4KB \u2014 skipping`);
-        buf = buf.subarray(head + 4);
+        {
+          const rest = buf.subarray(head + 4);
+          buf = rest.length > 0 ? Buffer.from(rest) : Buffer.alloc(0);
+        }
         continue;
       }
       const m = /Content-Length:\s*(\d+)/i.exec(buf.subarray(0, head).toString("ascii"));
       if (!m) {
         log("FRAME_SKIP: header without Content-Length");
-        buf = buf.subarray(head + 4);
+        {
+          const rest = buf.subarray(head + 4);
+          buf = rest.length > 0 ? Buffer.from(rest) : Buffer.alloc(0);
+        }
         continue;
       }
       const n = parseInt(m[1], 10);
@@ -1575,6 +1600,22 @@ ${j}`);
             text = applyRange(text, f);
         }
         const MAX_DOC_BYTES = 1 * 1024 * 1024;
+        const MAX_OPEN_DOCS = 256;
+        if (docs.size >= MAX_OPEN_DOCS && !docs.has(uri)) {
+          const oldest = docs.keys().next().value;
+          if (oldest) {
+            docs.delete(oldest);
+            seq.delete(oldest);
+            inFlight.delete(oldest);
+            dirty.delete(oldest);
+            const pt = pending.get(oldest);
+            if (pt) {
+              clearTimeout(pt);
+              pending.delete(oldest);
+            }
+            receipt2(`DOC_EVICTED ${oldest} (open-doc cap ${MAX_OPEN_DOCS})`);
+          }
+        }
         if (uri) {
           const stored = text.length > MAX_DOC_BYTES ? (receipt2(`DOC_TRUNCATED ${uri}: ${text.length} -> ${MAX_DOC_BYTES} bytes`), text.slice(0, MAX_DOC_BYTES)) : text;
           docs.set(uri, stored);
