@@ -1183,9 +1183,9 @@ async function pipeline(file, source, useJudge = true) {
   const candidates = lawsForHunk(store, file, decls, hunk, 12);
   try {
     const sock = l2SocketFor(store.root);
-    if (!existsSync2(sock))
-      throw new Error(`L2 socket absent (${sock})`);
-    readL2(sock, 400).then((l2) => receipt2(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`), (e) => receipt2(`L2_THROW: ${e.message}`));
+    if (existsSync2(sock)) {
+      readL2(sock, 400).then((l2) => receipt2(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`), (e) => receipt2(`L2_THROW: ${e.message}`));
+    }
   } catch (e) {
     receipt2(`L2_THROW: ${e.message}`);
   }

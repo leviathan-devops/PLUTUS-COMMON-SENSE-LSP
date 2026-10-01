@@ -145,14 +145,15 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   // escaped the .then(_, onRejected) handler. The socket path resolves inside try first.
   try {
     const sock = l2SocketFor(store.root);
-    // FIX (M2: gate the L2 probe) — the old code probed L2 unconditionally (197 dead
-    // PLUTUS_NO_STORE rows: the socket is keyed to the root, but L1 often resolved via the
-    // PLUTUS_L1_PATH env override to a DIFFERENT tree). Probe only when the socket EXISTS.
-    if (!existsSync(sock)) throw new Error(`L2 socket absent (${sock})`);
-    void readL2(sock, 400).then(
-      (l2) => receipt(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`),
-      (e) => receipt(`L2_THROW: ${(e as Error).message}`),
-    );
+    // FIX (M2 + round-22: the absent socket is the EXPECTED state, not a diagnostic) — the
+    // old code probed L2 unconditionally (197 dead rows). The socket is keyed to the root and
+    // most trees have none: an ABSENT socket is SILENT; only a live probe's result is receipted.
+    if (existsSync(sock)) {   // no L2 lane here — the normal case, no row (NEVER return: we are IN the pipeline)
+      void readL2(sock, 400).then(
+        (l2) => receipt(`L2 ${l2.ok ? `nodes=${l2.nodeCount} edges=${l2.edgeCount}` : l2.reason}`),
+        (e) => receipt(`L2_THROW: ${(e as Error).message}`),
+      );
+    }
   } catch (e) { receipt(`L2_THROW: ${(e as Error).message}`); }
   if (candidates.length === 0) { receipt(`NO-LAW file=${file} decls=${decls.length}`); return { tokens: [], cards: [], refused: null, vector: {} }; }
 

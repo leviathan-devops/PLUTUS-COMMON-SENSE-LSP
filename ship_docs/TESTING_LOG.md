@@ -227,3 +227,13 @@ Each round: every BLOCKING finding adjudicated + fixed; every fix pinned. Batter
 - **The artifacts:** `artifacts/sg-ocr-round22.json`; the full report at `agent://IndependentAudit`.
 
 ## AUDIT GATE: FAIL at intake (0c/1h) → all fixed → battery 57/0 — artifacts/sg-ocr-round22.json
+
+## TEST RESULT — 2026-10-01 — the noise-ratio measurement (the scope + misfire fixes, quantified)
+
+### HOST
+- **The run:** 6 real Plutus files + 2 foreign files through the selftest; the receipt deltas read.
+- **The raw output:** IN-SCOPE 6 (18 cards, avg 3.0) · OUT-OF-SCOPE 2 (silent) · receipt NEW rows:
+  `OUT-OF-SCOPE=2  REFUSE=0  PUBLISH=5  L2=0` → **NOISE RATIO 0.00** (was 2.0 before the fixes:
+  49 REFUSE + 197 L2 vs 124 PUBLISH).
+- **The verdict:** PASS — every receipt row is now signal; the reflex is silent where it must be.
+- **The artifacts:** the receipt (`forensic/lsp-receipts.log`) + the probe (`/tmp/noise-ratio.ts`).

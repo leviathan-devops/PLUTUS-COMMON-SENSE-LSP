@@ -343,7 +343,10 @@ test("A36_l2_probe_gated (M2 misfire fix)", async () => {
   const fs = await import("node:fs");
   const server = fs.readFileSync(`${import.meta.dir}/../scripts/plutus-lsp.ts`, "utf8");
   // the L2 probe must be gated on the socket existing (no more 197 dead rows)
-  expect(server).toContain("L2 socket absent");
+  // round-22: the absent socket is SILENT (the expected state), and the guard never returns
+  // from the pipeline (a `return` there exits the whole analyze — a self-inflicted bug)
+  expect(server).toContain("if (existsSync(sock))");
+  expect(server).not.toContain("if (!existsSync(sock)) return;");
 });
 
 test("A37_scope_gate_is_segment_based (the F-8 + scope-ask fix)", async () => {

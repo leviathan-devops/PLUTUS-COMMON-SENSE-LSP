@@ -209,3 +209,14 @@ derailment suite made HERMETIC (its own mini-Plutus law fixture — no host depe
 **The evidence:** battery 52/0/171; derailment 6/6 PASS (hermetic); scope 7/7; bundle rebuilt.
 **The honest notes:** the r19 highs are now fixed but the gate has NOT been re-run — no ship-ready
 claim; F-9/F-11 remain documented-only.
+
+## §13 · THE NOISE-RATIO CLOSURE (2026-10-01)
+
+**The built:** the L2 absent-socket case is now SILENT (it is the expected state); the receipt
+carries only signal.
+**The why:** the measured noise ratio was 0.83 after M1-M3; the remaining rows were the
+absent-socket L2 probes (the normal case).
+**The evidence:** a fresh measurement over 8 files → **NOISE RATIO 0.00** (was 2.0 pre-fix):
+IN-SCOPE 6 / 18 cards, OUT-OF-SCOPE 2 silent, `REFUSE=0 · L2=0 · PUBLISH=5`.
+**The honest notes:** one self-inflicted bug in this change (a `return` inside the pipeline exited
+the whole analyze) — caught by the W1 test + pinned (A36 asserts the guard never returns).
