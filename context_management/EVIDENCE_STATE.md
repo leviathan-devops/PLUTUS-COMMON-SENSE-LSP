@@ -47,3 +47,9 @@ PUBLISH n=3 tokens=plutus/law,plutus/tier,plutus/suspect file=…/mirror.ts verd
 | the derailment suite 6/6 |  (D5 VIOLATION, D6 silent) |
 | the bundle sha |  |
 | the audit trend | r11..r18 (r18 FAIL 1c/5h) |
+
+## THE ROUND-19 EVIDENCE (2026-10-01)
+- audit GATE FAIL (0 critical, 5 high), session c8027864: 
+- battery 46 pass / 0 fail / 158 expects (bun test v1.4.2 (744846f84), re-run this turn)
+- dist fingerprint: 
+- derailment suite 6/6 (unchanged since seal): 

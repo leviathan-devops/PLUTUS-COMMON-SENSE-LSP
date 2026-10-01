@@ -62,3 +62,10 @@
 - BUG-16: stat-then-open TOCTOU on a FIFO (openSync blocks). FIX: O_NONBLOCK on the open.
 - BUG-17: the selftest failure paths fell through (top-level `return` illegal in ESM). FIX: an async IIFE with returns.
 - LESSON (all five): the confinement/exit/lifecycle edges are where a fix re-introduces a CRITICAL — each was self-inflicted, each pinned.
+
+## [2026-10-01T15:30] — the round-19 triage (no code changed, triage only)
+- SYMPTOM: GATE FAIL (0 critical, 5 high), 27 findings — the r11..r18 drive's closing round.
+- ROOT CAUSE (per blocking high): confinement symlink/cwd gap; in-flight chain pile-up; head4 FIFO hang; cap() throwable toString; attribution-flag decoupling.
+- FIX: queued per finding (each gets its own fix + pin + re-scan). No rushed batch — F-07 stands.
+- LESSON: the confinement subsystem is the defect farm; every fix there needs its own adversarial pin set.
+- EVIDENCE: artifacts/sg-ocr-round19.json; TESTING_LOG verdict line; F-08/F-09 OPEN.

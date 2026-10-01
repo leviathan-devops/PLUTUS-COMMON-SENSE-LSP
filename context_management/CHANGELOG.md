@@ -44,3 +44,8 @@ DERAILMENT SUITE: 6/6 PASS, 0 FAIL
 artifact: .omp/derailment-suite-results.json: 6 real derailments through the LIVE pipeline -> 6/6 PASS; the
   fact-free case SILENT (the precision proof). Artifact .omp/derailment-suite-results.json.
 - Bundle dist/plutus-lsp.js sha256 3307a3b7a14d6f4b. THE GATE: r18 FAIL (1c/5h) — NO SHIP-READY CLAIM.
+
+## 2026-10-01 - the ship-package prelude (r19 wired, canon refreshed)
+- Fresh qwen-code-audit scan (FAIL 0c/5h, session c8027864) wired into all 6 ship docs (S1 green).
+- Canon refreshed for the package: logs first, then states, changelog, decisions, evidence.
+- Battery re-run 46/0/158; dist fingerprint recorded. NO SHIP-READY CLAIM (gate FAIL).

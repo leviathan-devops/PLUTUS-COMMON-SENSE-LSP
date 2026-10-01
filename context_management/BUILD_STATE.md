@@ -27,3 +27,9 @@ package.json · tsconfig.json
 
 ## THE RUNTIME KEYS (the spawn gates)
 `task.enableLsp` (the load-bearing one) · `lsp.diagnosticsOnEdit` · `lsp.diagnosticsOnWrite`.
+
+## SHA CHAIN
+- 2026-10-01 (r19 prelude):  (dist/plutus-lsp.js, 41,046 bytes)
+
+## SHA CHAIN
+- 2026-10-01 (r19 prelude): `3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155` (dist/plutus-lsp.js)

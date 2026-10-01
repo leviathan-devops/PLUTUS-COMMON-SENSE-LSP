@@ -71,3 +71,10 @@
   pipeline → 6/6 PASS (D5 ZFP fires VIOLATION; D6 fact-free silent). Artifact .omp/derailment-suite-results.json.
 - THE BUNDLE: dist/plutus-lsp.js sha256 3307a3b7a14d6f4b.
 - THE GATE: r18 FAIL — NO SHIP-READY CLAIM (~19 medium/low residual, recorded).
+
+## [2026-10-01T15:30] — the round-19 ship-docs + canon pass (the ship-package prelude)
+- WHAT: the r19 audit wired into all 6 ship docs (S1 green: 6/6 docs 50+ lines) + the canon refresh.
+- WHY: the ship-package skill demands Phase A (ship docs, S1-S7) then Phase B (canon, U1-U4) before assembly.
+- HOW: fresh qwen-code-audit scan (FAIL 0c/5h, session c8027864) → artifact JSON → TESTING_LOG verdict + F-08/F-09 + EN-13 + V-19-x + BUILD_REPORT §9.
+- EVIDENCE: dist SHA 3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155; battery 46/0/158; artifacts/sg-ocr-round19.json.
+- NEXT: the canon refresh (Phase B), then the package assembly (Phase E).

@@ -1,6 +1,6 @@
 # CURRENT_STATE — PLUTUS-COMMON-SENSE-LSP
 
-**As of:** 2026-10-01 · **The phase:** post-round-18 (the audit lane recovered; 8 rounds run; battery 46/0; the derailment suite 6/6; gate FAIL r18).
+**As of:** 2026-10-01 · **The phase:** pre-ship-package (r19 FAIL 0c/5h wired; battery 46/0/158; derailment 6/6; gate FAIL — no ship-ready claim).
 
 ## THE ARCHITECTURE AS IT NOW IS
 ```
@@ -36,3 +36,7 @@ The LSP INFORMS; the extension ENFORCES. A block path in the server is a VIOLATI
 The r17/r18 medium/low residual (~19 findings, recorded — hunk-hot-path caching, decl regex, accounting).
 The live-TUI render proof (needs a session restart — the LSP binds at session construction).
 The enforcement extension (deferred to v2). The 50+ item calibration corpus.
+
+**Dist fingerprint (this update):**
+
+Dist fingerprint (this update): `3307a3b7a14d6f4b9dac2188106c275f6277cde7ed838108e1ff83d133d82155`

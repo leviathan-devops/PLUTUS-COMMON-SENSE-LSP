@@ -23,3 +23,6 @@ The OBSERVABLE table has 5 templates; the canon has 564 laws. Grow the library p
 ## P3 · THE L2 SOCKET READ IN THE PIPELINE — DONE (2026-09-30)
 The probe is fire-and-forget (`void readL2(...).then(receipt)`) — the receipt carries the typed
 counts without blocking the keystroke path.
+
+## NOW - THE SHIP PACKAGE (this turn)
+Assemble per the ship-package skill: blocks from the docs -> dist gate -> native assembly -> audit. Gate FAIL stays FAIL.
