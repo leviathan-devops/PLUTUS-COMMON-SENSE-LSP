@@ -1,0 +1,68 @@
+════════ PLUTUS-COMMON-SENSE-LSP · THE CONTAINER TEST PLAN ════════
+
+## 1 · OBJECTIVE
+Verify that the plutus-lsp server works CORRECTLY in a CLEAN container with NO host
+leftovers — the full reflex pipeline: the graph read (store.ts) → the JevK5 judge
+(judge.ts) → the cards (cards.ts) → the stdio JSON-RPC protocol (scripts/plutus-lsp.ts).
+The claim under test: "the server is a working reflexive canon LSP." The container proves
+it in an environment where NOTHING of the host is present — so a green here cannot be a
+host-leftover artifact. The specific question: does the server produce its NAMED refusals
+(PLUTUS_NO_STORE, JEVK5_DOWN) when the environment is absent, and does it produce its
+cards (plutus/law, plutus/tier) when a fixture graph is present?
+
+## 2 · TOOLS UNDER TEST (the diff + the blast radius)
+- dist/plutus-lsp.js (the bundled server, 19.5 KB, sha f8e8349b9fa568a1) — the entry.
+- src/plutus-lsp/store.ts — the graph reader + the named refusals (PLUTUS_NO_STORE,
+  PLUTUS_NO_ROOT) + lawsForFile/lawsForHunk + declarationsIn.
+- src/plutus-lsp/judge.ts — CH-PLUTUS (the 5-of-7 nouls) + JEVK5_DOWN + the verdict.
+- src/plutus-lsp/cards.ts — the 7 tokens + FactCard + toDiagnostic.
+- The blast radius: (a) the LSP stdio protocol (the Content-Length frames), (b) the L1
+  kg.json read, (c) the JevK5 :8090 HTTP wire, (d) the receipt log write.
+
+## 3 · TEST SCENARIOS (each with its prompt + passToken + failToken + max)
+S1 POSITIVE — the clean-env named refusal (the DEFAULT in a container with no graph):
+  prompt: "Run this exact command and report the raw output verbatim:
+    PLUTUS_L1_PATH=/tmp/absent/kg.json bun dist/plutus-lsp.js --selftest /tmp/fixture.ts;
+    echo EXIT=$?"
+  passToken: PLUTUS_NO_STORE   failToken: SELFTEST OK   max: 120s
+S2 POSITIVE — the fixture graph produces the cards:
+  prompt: "Write a minimal fixture graph at /tmp/fx/.omp/graph-intelligence/layers/
+    semantica/kg.json with one law entity (type law, name IRON-01, tier IMMUTABLE,
+    statement 'ZFP threshold = 45'), write /tmp/fx/probe.ts containing
+    'export function computeMirrorSL(){}', then run:
+    PLUTUS_L1_PATH=/tmp/fx/.omp/graph-intelligence/layers/semantica/kg.json
+    bun dist/plutus-lsp.js --selftest /tmp/fx/probe.ts; echo EXIT=$?"
+  passToken: SELFTEST OK   failToken: NO TOKENS   max: 180s
+S3 NEGATIVE — a fact-free file yields NO card (the anti-phantom law):
+  prompt: "Run: PLUTUS_L1_PATH=<the S2 graph> bun dist/plutus-lsp.js --selftest
+    /tmp/fx/empty.ts (a file with no matching declarations); echo EXIT=$?"
+  passToken: NO-LAW   failToken: plutus/violation   max: 120s
+S4 NEGATIVE — the stdio protocol handshake answers (the LSP surface):
+  prompt: "Drive the server with a real LSP frame: printf a Content-Length framed
+    initialize JSON into bun dist/plutus-lsp.js --stdio and report the response."
+  passToken: serverInfo   failToken: crash   max: 120s
+
+## 4 · ADVERSARIAL (1+)
+A1 THE DOWN JUDGE — the named refusal (not a fabricated noul):
+  prompt: "Run: JEVK5_HEALTH=http://127.0.0.1:9/health PLUTUS_L1_PATH=<the S2 graph>
+    bun dist/plutus-lsp.js --selftest /tmp/fx/probe.ts; echo EXIT=$?  — then read
+    /tmp/plutus-lsp-receipts.log and report the REFUSE/JUDGE line verbatim."
+  passToken: JEVK5_DOWN   failToken: SELFTEST OK   max: 180s
+A2 THE MALFORMED FRAME — the framing bound holds (no OOM, no mis-slice):
+  prompt: "Send a malformed Content-Length (999999999) frame to the server; report
+    whether it survives and answers a subsequent valid initialize."
+  passToken: serverInfo   failToken: OOM   max: 120s
+
+## 5 · EVIDENCE
+- the container: mimo-ct:master (the fresh instance from the setup).
+- the dist SHA: the deployed dist/plutus-lsp.js (sha256 verified post-deploy by exec).
+- the artifact: /tmp/pcsl-ct-results.json (the per-scenario verdicts) copied out.
+- the channels: the exec outputs (the ground truth for the disk/DB state) + the
+  screenshot (the TUI frames for the agent's own runs).
+
+## 6 · PASS CRITERIA (the done-when)
+ALL of: (a) the deployed dist sha matches the local sha; (b) S1-S4 each show their
+passToken in a TOOL RESULT and their failToken absent; (c) A1-A2 behave as named;
+(d) the results artifact exists with the per-scenario verdicts; (e) no scenario timed
+out; (f) the container is alive at the close. A GENERIC error preempting a SPECIFIC
+token = UNOBSERVED, never PASS. No artifact = no claim.
