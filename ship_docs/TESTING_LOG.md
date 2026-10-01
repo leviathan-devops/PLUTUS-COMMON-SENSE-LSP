@@ -171,3 +171,15 @@ Each round: every BLOCKING finding adjudicated + fixed; every fix pinned. Batter
 (0 fail). The CRITICAL class was eliminated (r11) and re-introduced twice by fixes themselves
 (r15 selftest fall-through; r17 path-normalize-return-raw; r18 absolute-`..`) — each closed.
 **THE GATE: FAIL (r18) — NO SHIP-READY CLAIM. ~19 medium/low findings remain, all recorded.**
+
+## TEST RESULT — 2026-10-01 — the round-19 audit gate (r11..r18 drive closed)
+
+### SCRIPT — audit gate
+- **The run:** `qwen-code-audit scan` over the 4 core files (store/judge/cards/script).
+- **The raw output:** `GATE: FAIL (0 critical, 5 high)` — scope=workspace filesReviewed=4
+  findings=27 (critical=0 high=5 medium=15 low=7). Session `c8027864-47cf-47e7-93f5-bba3f17dcfd8`.
+- **The verdict:** FAIL — the 5 blocking highs are recorded as F entries (open until fixed and
+  re-proven). The CRITICAL class stays eliminated (0 critical, third round running).
+- **The artifacts:** `artifacts/sg-ocr-round19.json` (session, scope, counts, blocking list, dist SHA).
+
+## AUDIT GATE: FAIL (0 critical, 5 high) — session c8027864 — artifacts/sg-ocr-round19.json

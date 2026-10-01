@@ -48,3 +48,23 @@ THE MECHANISM: the fixes touched the same path/exit/confinement code — each fi
 new edge (return-raw, `throw` in `: never`, `..` clamp). THE REMEDY: report the trend WITH the
 re-introductions; stop on CONFIRMED-DEFECTS-FIXED, not a zero count. THE LESSON: fix-density in
 one subsystem re-introduces defects; the audit count is not a convergence proof.
+
+### F-08 — round-19 audit: 5 blocking highs (2026-10-01)
+- **What happened:** `GATE: FAIL (0 critical, 5 high)` — session c8027864, 4 files, 27 findings.
+- **Found:** the fresh qwen-code-audit scan (the r11..r18 drive's closing round).
+- **Root cause (per finding):** (1) path confinement: `resolve(p)` uses cwd + no realpath, a
+  symlink passes the prefix check; (2) in-flight judge chains pile up under rapid typing (no
+  single-flight); (3) `head4` reintroduces the FIFO hang (blocking openSync, no O_NONBLOCK);
+  (4) `cap()` can throw via a caller-controlled `toString()`; (5) the attribution flag is
+  computed from `finiteTop[0..1]` while the picked law may come from a weaker fallback.
+- **Impact:** none shipped — the gate stays FAIL; no ship-ready claim.
+- **Disposition:** OPEN — each maps to a DEBUG_LOG EN entry on fix; re-proven by re-scan + battery.
+
+### F-09 — the CRITICAL class re-introduced by the r18 fix itself (2026-10-01)
+- **What happened:** round-18 closed the path-normalize criticals; round-19 names a FRESH
+  critical-adjacent edge in the same confinement code (symlink + cwd-relative resolve).
+- **Found:** the round-19 scan (finding: scripts/plutus-lsp.ts:273).
+- **Root cause:** each fix adds lines to the same subsystem; the reviewer's supply of edges is
+  unbounded. The count is not convergence (FAILURE_LOG F-07 stands).
+- **Impact:** the gate stays FAIL; the fix is queued, not rushed.
+- **Disposition:** OPEN.

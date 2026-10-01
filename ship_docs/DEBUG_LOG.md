@@ -97,3 +97,14 @@ fell through to `readFileSync(undefined)`. Top-level `return` is illegal in ESM.
 IIFE wrapping the selftest, with `return exitFlushed(n)` on every fatal path + the no-chain path
 exiting synchronously. VERIFIED: the live `--selftest` with no file prints usage and exits 2.
 LESSON: two compounding bugs — a scheduled exit AND a forbidden top-level return.
+
+## EN-13 — round-19 blocking highs triaged (2026-10-01)
+- **THE FINDING:** 5 blocking highs (no criticals): confinement symlink/cwd gap; in-flight
+  chain pile-up; head4 FIFO hang; cap() throwable toString; attribution-flag decoupling.
+- **THE ROOT CAUSE:** three are fix-regressions (the confinement code keeps gaining edges; head4
+  bypasses the O_NONBLOCK discipline; the attribution flag predates the validated fallback), two
+  are known-deferred classes (single-flight chains; cap hardening).
+- **THE FIX:** queued per finding (each gets its own fix + pin + re-scan). No rushed batch.
+- **THE VERIFICATION:** the r19 artifact (`artifacts/sg-ocr-round19.json`) + the FAIL verdict line.
+- **THE LESSON:** the confinement subsystem is the defect farm — every fix there needs its own
+  adversarial pin (symlink, `..`, UNC, drive, empty, non-string) before the round closes.

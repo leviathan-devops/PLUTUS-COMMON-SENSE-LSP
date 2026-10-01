@@ -155,3 +155,16 @@ unfixed (hunk-hot-path tokenization caching, regex-literal/division stripping in
 `chain`/`relevancePass` request/latency accounting across the health+fault double-fetch, the
 `weakest`-name shadow of the strongest clause, the `plutus/tier` dead token). None is CRITICAL or
 HIGH; all are recorded. NO SHIP-READY CLAIM IS MADE — the last audit gate was FAIL (r18).
+
+## §9 · THE ROUND-19 AUDIT (2026-10-01 — the r11..r18 drive's closing round)
+
+**The built:** the audit artifact + its wiring (no code changed this round — triage only).
+**The why:** the ship-docs audit gate (S7) requires every audit wired before any milestone.
+**The how:** fresh `qwen-code-audit` scan → artifact JSON → TESTING_LOG verdict line +
+  FAILURE_LOG F-08/F-09 + DEBUG_LOG EN-13.
+**The evidence:** `GATE: FAIL (0 critical, 5 high)`, session `c8027864`,
+  `artifacts/sg-ocr-round19.json`, dist SHA `3307a3b7a14d6f4b…`.
+**The verification:** the verdict line is quoted verbatim in TESTING_LOG; the 5 blocking
+  findings each have an OPEN F entry.
+**The honest notes:** the CRITICAL class stays eliminated (0 critical, 3rd round running);
+  the 5 highs are queued, not rushed; NO SHIP-READY CLAIM.
