@@ -1,0 +1,97 @@
+{
+  "suite": "derailment-patterns",
+  "liveJudge": true,
+  "generated": "2026-10-01T21:36:00.690Z",
+  "pass": 6,
+  "fail": 0,
+  "total": 6,
+  "results": [
+    {
+      "id": "D1",
+      "what": "the fabricated SL cap (the canon ceiling is 36 pip; the edit sets 150)",
+      "tokens": [
+        "plutus/law",
+        "plutus/suspect"
+      ],
+      "verdict": "OK",
+      "passToken": "plutus/law",
+      "passHit": true,
+      "failToken": "SELFTEST OK",
+      "failHit": false,
+      "outTrim": "{\"tokens\":[\"plutus/law\",\"plutus/suspect\"],\"cards\":[{\"shape\":\"LAW\",\"title\":\"SL-CEILING — governs this code (relevance 0.74)\",\"rows\":[\"LAW: stop-loss ceiling = 36 pips HARD; SL cap in pips never exceeds 36\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: engine3:307\",\"JUDGE: relevance 0.74\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":2},{\"shape\":\"LAW\",\"title\":\"PAIR-FORMAT — governs this code (relevance 0.53)\",\"rows\":[\"LAW: currency pairs use the slash form EUR/USD, never EURUSD\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: bible12:88\",\"JUDGE: relevance 0.53\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":2},{\"shape\":\"SUSPECT\",\"title\":\"INCONCLUSIVE — the judge could not reach a verdict (weakest clause P2)\",\"rows\":[\"the undecided clause: P2\",\"VECTOR: P1=0.354  P2=0.252  P3=0.476  P4=0.742  P5=0.252  P6=0.381  P7=0.854\"],\"severity\":4,\"source\":\"plutus/suspect\",\"total\":1}],\"refused\":null,\"vector\":{\"P1\":0.3544022251752511,\"P2\":0.2522064905550622,\"P3\":0.47623860587377836,\"P4\":0.7416172934678368,\"P5\":0.2523553922060528,\"P6\":0.38125522998104094,\"P7\":0.8542766914387755},\"relevance\":[{\"lawId\":\"D17\",\"p\":0.7354250174726825},{\"lawId\":\"PAIR-FMT\",\"p\":0.533528964896063}]}",
+      "verdictStr": "PASS"
+    },
+    {
+      "id": "D2",
+      "what": "the multi-TP violation (the law: ONE TP; the edit defines TP1/TP2/TP3)",
+      "tokens": [
+        "plutus/law",
+        "plutus/violation"
+      ],
+      "verdict": "OK",
+      "passToken": "plutus/law",
+      "passHit": true,
+      "failToken": null,
+      "failHit": false,
+      "outTrim": "{\"tokens\":[\"plutus/law\",\"plutus/violation\"],\"cards\":[{\"shape\":\"LAW\",\"title\":\"SINGLE-TP — governs this code (relevance 0.39)\",\"rows\":[\"LAW: exactly ONE take-profit per trade; no TP1 TP2 TP3 ladder\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: bible40:2997\",\"JUDGE: relevance 0.39\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":3},{\"shape\":\"LAW\",\"title\":\"SL-CEILING — governs this code (relevance 0.59)\",\"rows\":[\"LAW: stop-loss ceiling = 36 pips HARD; SL cap in pips never exceeds 36\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: engine3:307\",\"JUDGE: relevance 0.59\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":3},{\"shape\":\"LAW\",\"title\":\"PAIR-FORMAT — governs this code (relevance 0.42)\",\"rows\":[\"LAW: currency pairs use the slash form EUR/USD, never EURUSD\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: bible12:88\",\"JUDGE: relevance 0.42\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":3},{\"shape\":\"VIOLATION\",\"title\":\"VIOLATION — this change contradicts SL-CEILING (P6=0.816)\",\"rows\":[\"LAW: stop-loss ceiling = 36 pips HARD; SL cap in pips never exceeds 36\",\"SOURCE: engine3:307\",\"YOU ARE EDITING: /tmp/pcsl-derailment/store.ts — read the law before this edit lands\",\"VECTOR: P1=0.459  P2=0.373  P3=0.713  P4=0.069  P5=0.427  P6=0.816  P7=0.906\"],\"severity\":1,\"source\":\"plutus/violation\",\"total\":1}],\"refused\":null,\"vector\":{\"P1\":0.4586750148255874,\"P2\":0.37288243241832864,\"P3\":0.7131552000970481,\"P4\":0.0690934008742996,\"P5\":0.4265563022684636,\"P6\":0.8157763324120508,\"P7\":0.9060358422765196},\"relevance\":[{\"lawId\":\"ONE-TP\",\"p\":0.3914316174485649},{\"lawId\":\"D17\",\"p\":0.5872049053526107},{\"lawId\":\"PAIR-FMT\",\"p\":0.4239521371813311}]}",
+      "verdictStr": "PASS"
+    },
+    {
+      "id": "D3",
+      "what": "the pair-format violation (the law: EUR/USD; the edit uses EURUSD)",
+      "tokens": [
+        "plutus/law",
+        "plutus/violation"
+      ],
+      "verdict": "OK",
+      "passToken": "plutus/law",
+      "passHit": true,
+      "failToken": null,
+      "failHit": false,
+      "outTrim": "{\"tokens\":[\"plutus/law\",\"plutus/violation\"],\"cards\":[{\"shape\":\"LAW\",\"title\":\"PAIR-FORMAT — governs this code (relevance 0.44)\",\"rows\":[\"LAW: currency pairs use the slash form EUR/USD, never EURUSD\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: bible12:88\",\"JUDGE: relevance 0.44\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":2},{\"shape\":\"LAW\",\"title\":\"SL-CEILING — governs this code (relevance 0.38)\",\"rows\":[\"LAW: stop-loss ceiling = 36 pips HARD; SL cap in pips never exceeds 36\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: engine3:307\",\"JUDGE: relevance 0.38\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":2},{\"shape\":\"VIOLATION\",\"title\":\"VIOLATION — this change contradicts PAIR-FORMAT (P6=0.831)\",\"rows\":[\"LAW: currency pairs use the slash form EUR/USD, never EURUSD\",\"SOURCE: bible12:88\",\"YOU ARE EDITING: /tmp/pcsl-derailment/cards.ts — read the law before this edit lands\",\"VECTOR: P1=0.286  P2=0.370  P3=0.828  P4=0.059  P5=0.167  P6=0.831  P7=0.918\"],\"severity\":1,\"source\":\"plutus/violation\",\"total\":1}],\"refused\":null,\"vector\":{\"P1\":0.2855606272124426,\"P2\":0.3697436163077968,\"P3\":0.8276763049884794,\"P4\":0.059002907581739795,\"P5\":0.16724991783495757,\"P6\":0.8314465637898917,\"P7\":0.9179924757918029},\"relevance\":[{\"lawId\":\"PAIR-FMT\",\"p\":0.4429561630395141},{\"lawId\":\"D17\",\"p\":0.3826056879663917}]}",
+      "verdictStr": "PASS"
+    },
+    {
+      "id": "D4",
+      "what": "the flat RRR (the law: category-specific; the edit sets one ratio)",
+      "tokens": [
+        "plutus/law",
+        "plutus/violation"
+      ],
+      "verdict": "OK",
+      "passToken": "plutus/law",
+      "passHit": true,
+      "failToken": null,
+      "failHit": false,
+      "outTrim": "{\"tokens\":[\"plutus/law\",\"plutus/violation\"],\"cards\":[{\"shape\":\"LAW\",\"title\":\"CATEGORY-RRR — governs this code (relevance 0.53)\",\"rows\":[\"LAW: risk-reward ratio is category-specific; a flat RRR across categories is forbidden\",\"TIER: EVOLVING\",\"SOURCE: bible27:410\",\"JUDGE: relevance 0.53\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":1},{\"shape\":\"VIOLATION\",\"title\":\"VIOLATION — this change contradicts CATEGORY-RRR (P4=0.869)\",\"rows\":[\"LAW: risk-reward ratio is category-specific; a flat RRR across categories is forbidden\",\"SOURCE: bible27:410\",\"YOU ARE EDITING: /tmp/pcsl-derailment/judge.ts — read the law before this edit lands\",\"VECTOR: P1=0.443  P2=0.450  P3=0.151  P4=0.869  P5=0.184  P6=0.777  P7=0.855\"],\"severity\":1,\"source\":\"plutus/violation\",\"total\":1}],\"refused\":null,\"vector\":{\"P1\":0.44340103450166823,\"P2\":0.4504997231372869,\"P3\":0.15121656874906586,\"P4\":0.8688553675912916,\"P5\":0.18412432259302264,\"P6\":0.776659243320128,\"P7\":0.8550992970959054},\"relevance\":[{\"lawId\":\"RRR-1\",\"p\":0.5306360236714793}]}",
+      "verdictStr": "PASS"
+    },
+    {
+      "id": "D5",
+      "what": "the ZFP threshold change (the canon: 45; the edit sets 60)",
+      "tokens": [
+        "plutus/law",
+        "plutus/violation"
+      ],
+      "verdict": "OK",
+      "passToken": "plutus/law",
+      "passHit": true,
+      "failToken": null,
+      "failHit": false,
+      "outTrim": "{\"tokens\":[\"plutus/law\",\"plutus/violation\"],\"cards\":[{\"shape\":\"LAW\",\"title\":\"ZFP-THRESHOLD — governs this code (relevance 0.70)\",\"rows\":[\"LAW: ZFP threshold = 45; changing the zone-formation threshold is a canon breach\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: bible40:2997\",\"JUDGE: relevance 0.70\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":3},{\"shape\":\"LAW\",\"title\":\"SL-CEILING — governs this code (relevance 0.67)\",\"rows\":[\"LAW: stop-loss ceiling = 36 pips HARD; SL cap in pips never exceeds 36\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: engine3:307\",\"JUDGE: relevance 0.67\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":3},{\"shape\":\"LAW\",\"title\":\"PAIR-FORMAT — governs this code (relevance 0.59)\",\"rows\":[\"LAW: currency pairs use the slash form EUR/USD, never EURUSD\",\"TIER: IMMUTABLE — never change without a recorded ruling\",\"SOURCE: bible12:88\",\"JUDGE: relevance 0.59\"],\"severity\":3,\"source\":\"plutus/law\",\"total\":3},{\"shape\":\"VIOLATION\",\"title\":\"VIOLATION — this change contradicts ZFP-THRESHOLD (P6=0.816)\",\"rows\":[\"LAW: ZFP threshold = 45; changing the zone-formation threshold is a canon breach\",\"SOURCE: bible40:2997\",\"YOU ARE EDITING: /tmp/pcsl-derailment/store.ts — read the law before this edit lands\",\"VECTOR: P1=0.501  P2=0.561  P3=0.735  P4=0.101  P5=0.269  P6=0.816  P7=0.943\"],\"severity\":1,\"source\":\"plutus/violation\",\"total\":1}],\"refused\":null,\"vector\":{\"P1\":0.5010532732092219,\"P2\":0.5614475637354537,\"P3\":0.7351642850309221,\"P4\":0.10055275242753103,\"P5\":0.26934310195482186,\"P6\":0.8163213243493692,\"P7\":0.9428885299330987},\"relevance\":[{\"lawId\":\"IRON-01\",\"p\":0.7008922271403144},{\"lawId\":\"D17\",\"p\":0.6735237915004659},{\"lawId\":\"PAIR-FMT\",\"p\":0.5923306889578814}]}",
+      "verdictStr": "PASS"
+    },
+    {
+      "id": "D6",
+      "what": "a fact-free file — the LSP must stay SILENT (the precision proof)",
+      "tokens": [],
+      "verdict": "OK",
+      "passToken": "NO-LAW",
+      "passHit": true,
+      "failToken": null,
+      "failHit": false,
+      "outTrim": "{\"tokens\":[],\"cards\":[],\"refused\":null,\"vector\":{}}",
+      "verdictStr": "PASS"
+    }
+  ]
+}

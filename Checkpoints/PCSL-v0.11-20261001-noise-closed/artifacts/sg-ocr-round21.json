@@ -1,0 +1,13 @@
+{
+  "gate": "GATE: BLOCKED (provider-unavailable)",
+  "session_id": "n/a — the lane failed before a session",
+  "scope": "scan src/plutus-lsp/{store,judge,cards}.ts,scripts/plutus-lsp.ts",
+  "files_reviewed": 0,
+  "critical": null,
+  "high": null,
+  "blocking": [],
+  "reason": "Go lane 403 (an active OpenCode Go subscription is required); zen-free 429 (FreeUsageLimitError: rate limit exceeded); poolside unrouted. No LLM was reached; NO verdict exists.",
+  "retry_condition": "when the Go subscription is active OR the zen-free rate limit resets; ALTERNATIVELY a local model lane (the judge itself cannot review).",
+  "dist_sha": "a1b73cf11e88dac2",
+  "prior_round": "r20 GATE: FAIL (0 critical, 7 high) — all 7 fixed this turn (see FAILURE_LOG F-12)"
+}
