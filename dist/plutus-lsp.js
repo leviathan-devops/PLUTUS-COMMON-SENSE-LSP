@@ -23,20 +23,25 @@ function validTier(v) {
 }
 function resolveRoot(startFile) {
   let dir = dirname(resolve(startFile));
+  let generic = null;
   for (let i = 0;i < 12; i++) {
     for (const m of STRONG_MARKERS)
       if (existsSync(join(dir, m)))
         return dir;
-    if (i < 3) {
+    if (generic === null && i < 3) {
       for (const m of ROOT_MARKERS)
-        if (existsSync(join(dir, m)))
-          return dir;
+        if (existsSync(join(dir, m))) {
+          generic = dir;
+          break;
+        }
     }
     const parent = dirname(dir);
     if (parent === dir)
       break;
     dir = parent;
   }
+  if (generic !== null)
+    return generic;
   throw new Error(`${PLUTUS_NO_ROOT}: no root marker (${ROOT_MARKERS.join(" | ")}) above ${startFile}`);
 }
 var KNOWN_L1_PATHS = Object.freeze([
@@ -369,16 +374,30 @@ function lawsForHunk(store, filePath, decls, hunk, topK = 3) {
   return scored.filter((x) => x.score > 0).sort((a, b) => b.score + w(b.l.tier) - (a.score + w(a.l.tier))).slice(0, topK).map((x) => x.l);
 }
 function callersOf(store, filePath) {
-  const norm = (p) => String(p ?? "").replace(/\\/g, "/").split("/").filter((s) => s.length > 0 && s !== ".").reduce((acc, s) => s === ".." ? (acc.pop(), acc) : [...acc, s], []).join("/");
+  const norm = (p) => {
+    const acc = [];
+    for (const seg of String(p ?? "").replace(/\\/g, "/").split("/")) {
+      if (seg.length === 0 || seg === ".")
+        continue;
+      if (seg === "..") {
+        acc.pop();
+        continue;
+      }
+      acc.push(seg);
+    }
+    return acc.join("/");
+  };
   const fp = norm(filePath);
   if (!fp)
     return [];
-  const tail = fp.split("/").slice(-2).join("/");
+  const tail = fp;
   const hits = store.relationships.filter((r) => {
     if (r.type !== "imports")
       return false;
     const t = norm(r.target);
-    return t === fp || t.endsWith(`/${tail}`);
+    if (!t)
+      return false;
+    return t === fp || t.endsWith(tail) && t.endsWith(`/${tail}`);
   });
   return [...new Set(hits.map((r) => String(r.source ?? "")).filter((x) => x.trim().length > 0))].sort().slice(0, 20);
 }
@@ -470,10 +489,15 @@ async function chain(state, nodes = ["P1", "P2", "P3", "P4", "P5", "P6", "P7"], 
     return { ok: false, answers: {}, reason: h.reason, requests: 0 };
   const valid = deduped.filter((id) => Object.hasOwn(CHAIN, id));
   const invalid = deduped.filter((id) => !Object.hasOwn(CHAIN, id));
+  const note = (m) => {
+    try {
+      receipt(m);
+    } catch {}
+  };
   if (invalid.length > 0)
-    receipt(`CHAIN invalid NodeId(s): ${invalid.join(",")} \u2014 filtered, never judged`);
+    note(`CHAIN invalid NodeId(s): ${invalid.join(",")} \u2014 filtered, never judged`);
   if (valid.length + invalid.length < nodes.length)
-    receipt(`CHAIN deduped ${nodes.length} \u2192 ${valid.length + invalid.length} (duplicates collapsed)`);
+    note(`CHAIN deduped ${nodes.length} \u2192 ${valid.length + invalid.length} (duplicates collapsed)`);
   if (valid.length === 0)
     return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const questions = {};
@@ -592,14 +616,23 @@ function observableQuestion(laws) {
   return best?.q ?? CHAIN.P4.q;
 }
 async function relevancePass(laws, filePath, hunk, timeoutMs = 20000) {
-  if (!Array.isArray(laws) || laws.length === 0)
+  if (!Array.isArray(laws))
+    laws = [];
+  const saneIn = laws.filter((l) => l && typeof l.id === "string" && typeof l.name === "string" && typeof l.statement === "string");
+  const malformed = laws.length - saneIn.length;
+  if (malformed > 0) {
+    try {
+      receipt(`RELEVANCE malformed=${malformed} entries dropped before judging`);
+    } catch {}
+  }
+  laws = saneIn;
+  if (laws.length === 0)
     return { ok: true, scored: [], requests: 0, judged: 0, total: 0, dropped: 0 };
   const h = await health();
   if (!h.ok)
     return { ok: false, scored: [], reason: h.reason, requests: 0, judged: 0, total: laws.length, dropped: 0 };
   const CAPPED = 12;
-  const sane = laws.filter((l) => l && typeof l.id === "string" && typeof l.name === "string" && typeof l.statement === "string");
-  const ordered = [...sane].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
+  const ordered = [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
   const judged = ordered.slice(0, CAPPED);
   const dropped = laws.length - judged.length;
   if (typeof filePath !== "string" || filePath.length === 0)
@@ -644,26 +677,41 @@ function partitionByRelevance(laws, rows) {
   if (!Array.isArray(rows))
     rows = [];
   laws = laws.filter((l) => l && typeof l.id === "string");
-  const byId = new Map(laws.map((l) => [l.id, l]));
+  const byId = new Map;
+  for (const l of laws) {
+    if (byId.has(l.id)) {
+      receipt(`PARTITION duplicate lawId ${l.id} \u2014 keep-first`);
+      continue;
+    }
+    byId.set(l.id, l);
+  }
   const relevant = [];
   const rejected = [];
   const unknown = [];
   let unmatched = 0;
   for (const r of rows) {
+    if (!r || typeof r !== "object") {
+      unmatched++;
+      continue;
+    }
     const law = byId.get(r.lawId);
     if (!law) {
       unmatched++;
       continue;
     }
-    if (r.p < 0)
+    const p = r.p;
+    if (typeof p !== "number" || !Number.isFinite(p) || p < 0)
       unknown.push(law);
-    else if (r.p >= relevanceT())
+    else if (p >= relevanceT())
       relevant.push(law);
     else
-      rejected.push({ law, p: r.p });
+      rejected.push({ law, p });
   }
-  if (unmatched > 0)
-    receipt(`PARTITION unmatched=${unmatched}/${rows.length} rows (stale or hallucinated lawId)`);
+  if (unmatched > 0) {
+    try {
+      receipt(`PARTITION unmatched=${unmatched}/${rows.length} rows (stale or hallucinated lawId)`);
+    } catch {}
+  }
   return { relevant, rejected, unknown };
 }
 
@@ -738,7 +786,8 @@ function verdictCard(v, kept, targetFile) {
   const keptArr = Array.isArray(kept) ? kept : [];
   const scored = keptArr.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string" && typeof k.p === "number");
   const finiteTop = scored.filter((k) => Number.isFinite(k.p) && k.p >= 0 && k.p <= 1).sort((a, b) => b.p - a.p);
-  const law = (finiteTop[0] ?? scored[0] ?? keptArr[0])?.law;
+  const validLaw = (k) => !!k && typeof k.law?.name === "string" && typeof k.law?.statement === "string";
+  const law = (finiteTop.find(validLaw) ?? scored.find(validLaw) ?? keptArr.find(validLaw))?.law;
   if (!law)
     return null;
   const EPS = 0.01;
@@ -746,10 +795,10 @@ function verdictCard(v, kept, targetFile) {
   const attributed = finiteTop.length > 0 && !topTied;
   const vecStr = Object.entries(vector).map(([k, n]) => `${k}=${pct(n)}`).join("  ");
   const anchorFile = (() => {
-    const t = (targetFile ?? "").trim();
+    const t = typeof targetFile === "string" ? targetFile.trim() : "";
     if (t)
       return t;
-    const a = (law.anchor ?? "").trim();
+    const a = typeof law.anchor === "string" ? law.anchor.trim() : "";
     if (!a)
       return "(anchor missing)";
     const m = /^(.*?)(?::\d+(?::\d+)?)?$/.exec(a);
@@ -766,7 +815,7 @@ function verdictCard(v, kept, targetFile) {
       title: `VIOLATION \u2014 this change contradicts ${law.name} (${v.weakest}=${pct(weakScore)})`,
       rows: [
         `LAW: ${law.statement}`,
-        `SOURCE: ${law.anchor}`,
+        `SOURCE: ${typeof law.anchor === "string" && law.anchor.length > 0 ? law.anchor : "(anchor missing)"}`,
         `YOU ARE EDITING: ${anchorFile} \u2014 read the law before this edit lands`,
         `VECTOR: ${vecStr}`
       ],
@@ -780,7 +829,7 @@ function verdictCard(v, kept, targetFile) {
     return {
       shape: "DRIFT",
       title: `DRIFT \u2014 this change contradicts a prior decision (${dc}=${pct(vector[dc])})`,
-      rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vecStr}`],
+      rows: [`LAW: ${law.statement}`, `SOURCE: ${typeof law.anchor === "string" && law.anchor.length > 0 ? law.anchor : "(anchor missing)"}`, `VECTOR: ${vecStr}`],
       severity: SEVERITY.Warning,
       source: "plutus/drift",
       total: 1
@@ -789,7 +838,7 @@ function verdictCard(v, kept, targetFile) {
   return {
     shape: "SUSPECT",
     title: `SUSPECT \u2014 ${law.name} may be breached (${v.weakest ?? "none"}=${pct(v.weakest ? vector[v.weakest] : undefined)})${kindNote}; evidence required`,
-    rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vecStr}`],
+    rows: [`LAW: ${law.statement}`, `SOURCE: ${typeof law.anchor === "string" && law.anchor.length > 0 ? law.anchor : "(anchor missing)"}`, `VECTOR: ${vecStr}`],
     severity: SEVERITY.Warning,
     source: "plutus/suspect",
     total: 1
@@ -816,7 +865,7 @@ function callersCard(callers) {
 }
 function staleCard(reason) {
   const rs = typeof reason === "string" && reason.length > 0 ? reason : "PLUTUS_NO_STORE: unknown";
-  const code = rs.split(":")[0];
+  const code = /^(PLUTUS_NO_[A-Z]+|JEVK5_DOWN|[A-Z0-9_]+)/.exec(rs)?.[1]?.slice(0, 32) ?? "PLUTUS_NO_STORE";
   return {
     shape: "STALE",
     title: `the canon graph is unavailable [${code}]`,
@@ -959,38 +1008,44 @@ async function pipeline(file, source, useJudge = true) {
   receipt2(`PUBLISH n=${cards.length} tokens=${tokens.join(",")} file=${file}${v ? ` verdict=${v.kind}` : ""}`);
   return { tokens, cards, refused: null, vector, relevance };
 }
+var exitFlushed = (code) => {
+  try {
+    receiptFlush();
+  } catch {}
+  process.exit(code);
+};
 if (process.argv.includes("--selftest")) {
   const i = process.argv.indexOf("--selftest");
   const file = process.argv.slice(i + 1).find((a) => !a.startsWith("--"));
   if (!file) {
     console.error("usage: --selftest <file> [--no-judge]");
-    process.exit(2);
+    exitFlushed(2);
   }
   let src = "";
   try {
     src = readFileSync(file, "utf8");
   } catch (e) {
     console.error(`ENOENT: ${file} \u2014 ${e.message}`);
-    process.exit(2);
+    exitFlushed(2);
   }
   let r;
   try {
     r = await pipeline(file, src, !process.argv.includes("--no-judge"));
   } catch (e) {
     console.error(`PIPELINE_FAIL: ${e.message}`);
-    process.exit(1);
+    exitFlushed(1);
   }
   console.log(JSON.stringify(r, null, 1));
   if (r.refused) {
     console.error(`REFUSED: ${r.refused}`);
-    process.exit(1);
+    exitFlushed(1);
   }
   if (r.tokens.length === 0) {
     console.error("NO TOKENS \u2014 the reflex produced no card");
-    process.exit(1);
+    exitFlushed(1);
   }
   console.error(`SELFTEST OK \u2014 ${r.cards.length} card(s), tokens: ${r.tokens.join(", ")}`);
-  process.exit(0);
+  exitFlushed(0);
 }
 if (process.argv.includes("--stdio")) {
   receipt2(`INIT pid=${process.pid}`);
@@ -1101,11 +1156,11 @@ ${j}`);
       analyze(uri).catch((e) => log(`ANALYZE_FAIL ${uri}: ${e.message}`));
     }, 250));
   };
-  process.stdin.on("close", () => process.exit(0));
-  process.stdin.on("end", () => process.exit(0));
+  process.stdin.on("close", () => exitFlushed(0));
+  process.stdin.on("end", () => exitFlushed(0));
   process.stdin.on("error", (e) => {
     log(`STDIN_ERROR: ${e.message}`);
-    process.exit(1);
+    exitFlushed(1);
   });
   const MAX_STDIN = 32 * 1024 * 1024;
   process.stdin.on("data", (c) => {
@@ -1174,14 +1229,15 @@ ${j}`);
       } else if (msg.method === "initialized") {} else if (msg.method === "shutdown") {
         send({ jsonrpc: "2.0", id: msg.id, result: null });
       } else if (msg.method === "exit") {
-        process.exit(0);
+        exitFlushed(0);
       } else if (msg.method === "textDocument/didOpen" || msg.method === "textDocument/didChange") {
         const p = msg.params;
         const uri = p?.textDocument?.uri ?? "";
         const rawCC = p?.contentChanges;
         if (rawCC !== undefined && !Array.isArray(rawCC)) {
           log(`PARAMS_REJECTED ${uri}: contentChanges is ${typeof rawCC}`);
-          break;
+          buf = buf.subarray(head + 4);
+          continue;
         }
         const cc = Array.isArray(rawCC) ? rawCC : [];
         for (const frag of cc) {
@@ -1193,7 +1249,14 @@ ${j}`);
         const partial = cc.length - full.length;
         if (partial > 0)
           log(`INCREMENTAL_REJECTED ${uri}: ${partial} ranged fragment(s) \u2014 last-good kept`);
-        const text = full.length > 0 ? full[full.length - 1].text ?? docs.get(uri) ?? "" : p?.textDocument?.text ?? docs.get(uri) ?? "";
+        const lastText = full[full.length - 1]?.text;
+        const openText = p?.textDocument?.text;
+        const good = (x) => typeof x === "string";
+        if (full.length > 0 && !good(lastText))
+          log(`PARAMS_REJECTED ${uri}: fragment text is ${typeof lastText}`);
+        if (full.length === 0 && openText !== undefined && !good(openText))
+          log(`PARAMS_REJECTED ${uri}: open text is ${typeof openText}`);
+        const text = full.length > 0 ? good(lastText) ? lastText : docs.get(uri) ?? "" : good(openText) ? openText : docs.get(uri) ?? "";
         if (uri) {
           docs.set(uri, text);
           scheduleAnalyze(uri);

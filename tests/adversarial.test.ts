@@ -232,3 +232,43 @@ test("A24_topK_clamped (round-12 positive int)", async () => {
   const b = lawsForHunk(store, "src/plutus-lsp/cards.ts", [], "const cards = fileCards;", NaN as any);
   expect(b.length).toBe(a.length);   // NaN topK degrades to the default, never []
 });
+
+test("A25_partition_validates_rows (round-13 NaN/null → unknown)", async () => {
+  const { partitionByRelevance } = await import("../src/plutus-lsp/judge.ts");
+  const laws = [
+    { id: "law::A", name: "A", statement: "s a", tier: "IMMUTABLE", anchor: "a:1", source: "MC" },
+    { id: "law::B", name: "B", statement: "s b", tier: "IMMUTABLE", anchor: "a:2", source: "MC" },
+  ];
+  // NaN / undefined / non-number scores are UNREADABLE → unknown, never rejected
+  const part = partitionByRelevance(laws as any, [
+    { index: 0, lawId: "law::A", p: NaN },
+    { index: 1, lawId: "law::B", p: undefined as any },
+    null as any,
+  ]);
+  expect(part.unknown.length).toBe(2);
+  expect(part.rejected.length).toBe(0);
+});
+
+test("A26_fallback_attribution_validated (round-13 no unchecked law)", async () => {
+  const { verdictCard } = await import("../src/plutus-lsp/cards.ts");
+  // every entry malformed: no card at all (never `LAW: undefined`)
+  const c: any = verdictCard({ kind: "SUSPECT", weakest: null, vector: {} },
+    [{ law: { name: 123 }, p: 0.9 }] as any);
+  expect(c).toBeNull();
+});
+
+test("A27_resolveRoot_prefers_STRONG (round-13 any-depth win)", async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { resolveRoot } = await import("../src/plutus-lsp/store.ts");
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "pcsl-root-"));
+  // generic marker NEAR (level 0), STRONG marker FAR (level 3): STRONG must win
+  fs.writeFileSync(path.join(base, "tsconfig.json"), "{}");
+  const deep = path.join(base, "a", "b", "c");
+  fs.mkdirSync(deep, { recursive: true });
+  fs.mkdirSync(path.join(deep, ".arsumbris"));
+  const root = resolveRoot(path.join(deep, "f.ts"));
+  expect(root).toBe(deep);
+  fs.rmSync(base, { recursive: true, force: true });
+});

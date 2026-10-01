@@ -156,23 +156,26 @@ export async function pipeline(file: string, source: string, useJudge = true): P
   return { tokens, cards, refused: null, vector, relevance };
 }
 
+// FIX (audit round-13: receipts flush on exit) — the buffered writer lost the last ~500ms
+// on every process.exit path (selftest 0/1/2, shutdown, stdin close/end/error). Flush first.
+const exitFlushed = (code: number): never => { try { receiptFlush(); } catch { /* best-effort */ } process.exit(code); };
 // ── THE SELFTEST (the W4 gate) ───────────────────────────────────────────────
 if (process.argv.includes("--selftest")) {
   const i = process.argv.indexOf("--selftest");
   // FIX (audit:59 + flag order) — take the first NON-FLAG arg after --selftest, so
   // `--selftest --no-judge <file>` works the same as `--selftest <file> --no-judge`.
   const file = process.argv.slice(i + 1).find((a) => !a.startsWith("--"));
-  if (!file) { console.error("usage: --selftest <file> [--no-judge]"); process.exit(2); }
+  if (!file) { console.error("usage: --selftest <file> [--no-judge]"); exitFlushed(2); }
   let src = "";
-  try { src = readFileSync(file, "utf8"); } catch (e) { console.error(`ENOENT: ${file} — ${(e as Error).message}`); process.exit(2); }
+  try { src = readFileSync(file, "utf8"); } catch (e) { console.error(`ENOENT: ${file} — ${(e as Error).message}`); exitFlushed(2); }
   let r: PipelineResult;
   try { r = await pipeline(file, src, !process.argv.includes("--no-judge")); }
-  catch (e) { console.error(`PIPELINE_FAIL: ${(e as Error).message}`); process.exit(1); }   // FIX (audit:62)
+  catch (e) { console.error(`PIPELINE_FAIL: ${(e as Error).message}`); exitFlushed(1); }   // FIX (audit:62)
   console.log(JSON.stringify(r, null, 1));
-  if (r.refused) { console.error(`REFUSED: ${r.refused}`); process.exit(1); }
-  if (r.tokens.length === 0) { console.error("NO TOKENS — the reflex produced no card"); process.exit(1); }
+  if (r.refused) { console.error(`REFUSED: ${r.refused}`); exitFlushed(1); }
+  if (r.tokens.length === 0) { console.error("NO TOKENS — the reflex produced no card"); exitFlushed(1); }
   console.error(`SELFTEST OK — ${r.cards.length} card(s), tokens: ${r.tokens.join(", ")}`);
-  process.exit(0);
+  exitFlushed(0);
 }
 
 // ── THE STDIO SERVER ─────────────────────────────────────────────────────────
@@ -281,9 +284,9 @@ if (process.argv.includes("--stdio")) {
   };
 
   // FIX (audit: stdin close/end) — if the client dies the server exits instead of hanging forever.
-  process.stdin.on("close", () => process.exit(0));
-  process.stdin.on("end", () => process.exit(0));
-  process.stdin.on("error", (e) => { log(`STDIN_ERROR: ${(e as Error).message}`); process.exit(1); });
+  process.stdin.on("close", () => exitFlushed(0));
+  process.stdin.on("end", () => exitFlushed(0));
+  process.stdin.on("error", (e) => { log(`STDIN_ERROR: ${(e as Error).message}`); exitFlushed(1); });
   // FIX (audit: MAX_STDIN was READ but never DECLARED — ReferenceError on the oversize
   // path). One cap for the whole stdin buffer, shared by the separator check and the frame check.
   const MAX_STDIN = 32 * 1024 * 1024;
@@ -350,7 +353,7 @@ if (process.argv.includes("--stdio")) {
       } else if (msg.method === "shutdown") {
         send({ jsonrpc: "2.0", id: msg.id, result: null });
       } else if (msg.method === "exit") {
-        process.exit(0);
+        exitFlushed(0);
       } else if (msg.method === "textDocument/didOpen" || msg.method === "textDocument/didChange") {
         // FIX (audit scripts/plutus-lsp.ts:122 CRITICAL): didChange carries contentChanges[].text,
         // NOT textDocument.text (which only didOpen has). Applying a full-sync change here.
@@ -366,7 +369,10 @@ if (process.argv.includes("--stdio")) {
         // the stdin handler (server crash); a non-string text poisoned docs (src.split threw
         // later); a non-string uri threw in fileOf. Garbage params are REJECTED, never stored.
         const rawCC = (p as { contentChanges?: unknown } | undefined)?.contentChanges;
-        if (rawCC !== undefined && !Array.isArray(rawCC)) { log(`PARAMS_REJECTED ${uri}: contentChanges is ${typeof rawCC}`); break; }
+        // FIX (audit round-13: reject CONTINUES the drain) — the old `break` exited the frame
+        // loop, so complete frames buffered BEHIND the bad one waited for the next stdin chunk
+        // (possibly never). A bad frame is SKIPPED (sliced past); the drain continues.
+        if (rawCC !== undefined && !Array.isArray(rawCC)) { log(`PARAMS_REJECTED ${uri}: contentChanges is ${typeof rawCC}`); buf = buf.subarray(head + 4); continue; }
         const cc = (Array.isArray(rawCC) ? rawCC : []) as Array<{ text?: unknown; range?: unknown }>;
         for (const frag of cc) {
           if (frag && typeof frag === "object" && !("text" in frag)) {
@@ -380,7 +386,15 @@ if (process.argv.includes("--stdio")) {
         const full = cc.filter((f) => f && typeof f === "object" && (f as { range?: unknown }).range === undefined);
         const partial = cc.length - full.length;
         if (partial > 0) log(`INCREMENTAL_REJECTED ${uri}: ${partial} ranged fragment(s) — last-good kept`);
-        const text = full.length > 0 ? ((full[full.length - 1] as { text?: unknown }).text as string ?? docs.get(uri) ?? "") : (p?.textDocument?.text ?? docs.get(uri) ?? "");
+        // FIX (audit round-13: text typeof-checked) — a crafted {text:123} is not nullish, so
+        // `?? docs.get` did NOT apply and docs.set(uri, 123) poisoned the Map (src.split threw
+        // later). Non-string text is REJECTED; last-good kept.
+        const lastText = (full[full.length - 1] as { text?: unknown } | undefined)?.text;
+        const openText = (p as { textDocument?: { text?: unknown } } | undefined)?.textDocument?.text;
+        const good = (x: unknown): x is string => typeof x === "string";
+        if (full.length > 0 && !good(lastText)) log(`PARAMS_REJECTED ${uri}: fragment text is ${typeof lastText}`);
+        if (full.length === 0 && openText !== undefined && !good(openText)) log(`PARAMS_REJECTED ${uri}: open text is ${typeof openText}`);
+        const text = full.length > 0 ? (good(lastText) ? lastText : docs.get(uri) ?? "") : (good(openText) ? openText : docs.get(uri) ?? "");
         if (uri) { docs.set(uri, text); scheduleAnalyze(uri); }
       } else if (msg.method === "textDocument/didClose") {
         const p = msg.params as { textDocument?: { uri?: string } } | undefined;

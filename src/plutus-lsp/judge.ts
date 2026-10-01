@@ -133,10 +133,13 @@ export async function chain(state: string, nodes: NodeId[] = ["P1", "P2", "P3", 
   // true, so a cast string passed validation and CHAIN[id].q blew up. Object.hasOwn only.
   const valid = deduped.filter((id) => Object.hasOwn(CHAIN, id));
   const invalid = deduped.filter((id) => !Object.hasOwn(CHAIN, id));
-  if (invalid.length > 0) receipt(`CHAIN invalid NodeId(s): ${invalid.join(",")} — filtered, never judged`);
+  // FIX (audit round-13: receipt never throws the chain) — receipt is a host-installed hook;
+  // if the host writer throws, the chain must still return its fail-closed vector. One guard.
+  const note = (m: string) => { try { receipt(m); } catch { /* the note is best-effort; the verdict is not */ } };
+  if (invalid.length > 0) note(`CHAIN invalid NodeId(s): ${invalid.join(",")} — filtered, never judged`);
   // FIX (audit round-12: dedupe is LOUD too) — [P4,P4,P4] silently became one vote. A quorum
   // change the caller cannot see is a hidden contract change; receipt it.
-  if (valid.length + invalid.length < nodes.length) receipt(`CHAIN deduped ${nodes.length} → ${valid.length + invalid.length} (duplicates collapsed)`);
+  if (valid.length + invalid.length < nodes.length) note(`CHAIN deduped ${nodes.length} → ${valid.length + invalid.length} (duplicates collapsed)`);
   if (valid.length === 0) return { ok: false, answers: {}, reason: "JUDGE_NO_NODES", requests: 0 };
   const questions: Record<string, { type: "noul"; instructions: string }> = {};
   for (const id of valid) questions[id] = { type: "noul", instructions: id === "P4" && p4Override ? p4Override : CHAIN[id].q };
@@ -376,7 +379,15 @@ export async function relevancePass(
   // partial-as-complete is banned).
   // FIX (audit round-12: Array.isArray FIRST) — laws.length itself threw on null/non-array.
   // Non-arrays degrade to the named empty state, never a throw.
-  if (!Array.isArray(laws) || laws.length === 0) return { ok: true, scored: [], requests: 0, judged: 0, total: 0, dropped: 0 };   // the anti-phantom law
+  // FIX (audit round-13: ONE sanitize, FIRST) — the old code sanitized twice with divergent
+  // predicates (name-check vs no-name-check) and computed dropped/total from different sets.
+  // Now: sanitize ONCE up front; judged/total/dropped all derive from the same sets.
+  if (!Array.isArray(laws)) laws = [];
+  const saneIn: LawEntity[] = laws.filter((l) => l && typeof l.id === "string" && typeof l.name === "string" && typeof l.statement === "string");
+  const malformed = laws.length - saneIn.length;
+  if (malformed > 0) { try { receipt(`RELEVANCE malformed=${malformed} entries dropped before judging`); } catch { /* best-effort */ } }
+  laws = saneIn;
+  if (laws.length === 0) return { ok: true, scored: [], requests: 0, judged: 0, total: 0, dropped: 0 };   // the anti-phantom law
   const h = await health();
   if (!h.ok) return { ok: false, scored: [], reason: h.reason, requests: 0, judged: 0, total: laws.length, dropped: 0 };
 
@@ -389,8 +400,7 @@ export async function relevancePass(
   // FIX (audit round-12: sanitize BEFORE sort) — a null entry threw on .tier and a missing
   // statement threw on .slice. Filter first, then order, then map.
   const CAPPED = 12;
-  const sane: LawEntity[] = laws.filter((l) => l && typeof l.id === "string" && typeof l.name === "string" && typeof l.statement === "string");
-  const ordered = [...sane].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
+  const ordered = [...laws].sort((a, b) => (a.tier === "IMMUTABLE" ? 0 : 1) - (b.tier === "IMMUTABLE" ? 0 : 1));
   const judged = ordered.slice(0, CAPPED);
   const dropped = laws.length - judged.length;
 
@@ -457,7 +467,13 @@ export function partitionByRelevance(
   if (!Array.isArray(laws)) laws = [];
   if (!Array.isArray(rows)) rows = [];
   laws = laws.filter((l) => l && typeof l.id === "string");
-  const byId = new Map(laws.map((l) => [l.id, l]));
+  // FIX (audit round-13: duplicate lawIds deduped LOUDLY) — Map last-wins silently dropped
+  // a candidate. Keep-first, receipt the collapse so a caller bug is visible.
+  const byId = new Map<string, LawEntity>();
+  for (const l of laws) {
+    if (byId.has(l.id)) { receipt(`PARTITION duplicate lawId ${l.id} — keep-first`); continue; }
+    byId.set(l.id, l);
+  }
   const relevant: LawEntity[] = [];
   const rejected: Array<{ law: LawEntity; p: number }> = [];
   const unknown: LawEntity[] = [];
@@ -466,11 +482,17 @@ export function partitionByRelevance(
     // FIX (audit: unmatched rows are COUNTED) — a stale/misordered row (wrong lawId) is still
     // never assigned, but the count surfaces in the receipt so a hallucinated judge reply
     // (wrong lawId, missing Rk) cannot disappear silently.
-    const law = byId.get(r.lawId);
+    // FIX (audit round-13: row SHAPES validated) — the old `r.p < 0` was false for
+    // NaN/undefined/non-number, so an unreadable score fell into `rejected` (judge-said-no)
+    // instead of `unknown`. Only a finite number partitions; anything else is unknown.
+    // A null row (not an object) is unmatched, never a throw.
+    if (!r || typeof r !== "object") { unmatched++; continue; }
+    const law = byId.get((r as RelevanceRow).lawId);
     if (!law) { unmatched++; continue; }
-    if (r.p < 0) unknown.push(law);
-    else if (r.p >= relevanceT()) relevant.push(law); else rejected.push({ law, p: r.p });
+    const p = (r as RelevanceRow).p;
+    if (typeof p !== "number" || !Number.isFinite(p) || p < 0) unknown.push(law);
+    else if (p >= relevanceT()) relevant.push(law); else rejected.push({ law, p });
   }
-  if (unmatched > 0) receipt(`PARTITION unmatched=${unmatched}/${rows.length} rows (stale or hallucinated lawId)`);
+  if (unmatched > 0) { try { receipt(`PARTITION unmatched=${unmatched}/${rows.length} rows (stale or hallucinated lawId)`); } catch { /* best-effort */ } }
   return { relevant, rejected, unknown };
 }

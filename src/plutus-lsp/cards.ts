@@ -172,7 +172,12 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   const keptArr: JudgedLaw[] = Array.isArray(kept) ? kept : [];
   const scored = keptArr.filter((k) => k && k.law && typeof k.law.name === "string" && typeof k.law.statement === "string" && typeof k.p === "number");
   const finiteTop = scored.filter((k) => Number.isFinite(k.p) && k.p >= 0 && k.p <= 1).sort((a, b) => b.p - a.p);
-  const law = (finiteTop[0] ?? scored[0] ?? keptArr[0])?.law;
+  // FIX (audit round-13: the fallback is VALIDATED too) — keptArr[0]?.law skipped the
+  // name/statement guard, so a malformed entry rendered `LAW: undefined`. Every pick,
+  // including the fallback, clears the same bar — or there is no card.
+  const validLaw = (k: unknown): k is JudgedLaw =>
+    !!k && typeof (k as JudgedLaw).law?.name === "string" && typeof (k as JudgedLaw).law?.statement === "string";
+  const law = (finiteTop.find(validLaw) ?? scored.find(validLaw) ?? keptArr.find(validLaw))?.law;
   if (!law) return null;                            // no measured law → no card, never a guess
   // FIX (audit round-11: epsilon at DISPLAY precision) — 1e-9 caught exact-float ties only,
   // but titles render p.toFixed(2): 0.811 vs 0.807 displayed identically yet attributed
@@ -188,9 +193,11 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   // and rendered `YOU ARE EDITING:  — …`. Trim, fall back on empty, and strip :line:col
   // (Windows drive paths survive).
   const anchorFile = (() => {
-    const t = (targetFile ?? "").trim();
+    // FIX (audit round-13: typeof guards) — a number/object via JS interop passed `??` then
+    // threw on .trim(), losing every card. Non-strings fall through to the fallbacks.
+    const t = typeof targetFile === "string" ? targetFile.trim() : "";
     if (t) return t;
-    const a = (law.anchor ?? "").trim();
+    const a = typeof law.anchor === "string" ? law.anchor.trim() : "";
     if (!a) return "(anchor missing)";
     const m = /^(.*?)(?::\d+(?::\d+)?)?$/.exec(a);
     return m ? m[1] : a;
@@ -211,7 +218,9 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
       title: `VIOLATION — this change contradicts ${law.name} (${v.weakest}=${pct(weakScore)})`,
       rows: [
         `LAW: ${law.statement}`,
-        `SOURCE: ${law.anchor}`,
+        // FIX (audit round-13: verdict rows share the fallback) — lawCard had it, the verdict
+        // rows rendered `SOURCE: undefined` on a corrupt store. One bar everywhere.
+        `SOURCE: ${typeof law.anchor === "string" && law.anchor.length > 0 ? law.anchor : "(anchor missing)"}`,
         `YOU ARE EDITING: ${anchorFile} — read the law before this edit lands`,
         `VECTOR: ${vecStr}`,
       ],
@@ -228,7 +237,7 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
     return {
       shape: "DRIFT",
       title: `DRIFT — this change contradicts a prior decision (${dc}=${pct(vector[dc as keyof typeof vector])})`,
-      rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vecStr}`],
+      rows: [`LAW: ${law.statement}`, `SOURCE: ${typeof law.anchor === "string" && law.anchor.length > 0 ? law.anchor : "(anchor missing)"}`, `VECTOR: ${vecStr}`],
       severity: SEVERITY.Warning,
       source: "plutus/drift",
       total: 1,
@@ -240,7 +249,7 @@ export function verdictCard(v: Verdict | null | undefined, kept: JudgedLaw[] | n
   return {
     shape: "SUSPECT",
     title: `SUSPECT — ${law.name} may be breached (${v.weakest ?? "none"}=${pct(v.weakest ? vector[v.weakest as keyof typeof vector] : undefined)})${kindNote}; evidence required`,
-    rows: [`LAW: ${law.statement}`, `SOURCE: ${law.anchor}`, `VECTOR: ${vecStr}`],
+    rows: [`LAW: ${law.statement}`, `SOURCE: ${typeof law.anchor === "string" && law.anchor.length > 0 ? law.anchor : "(anchor missing)"}`, `VECTOR: ${vecStr}`],
     severity: SEVERITY.Warning,
     source: "plutus/suspect",
     total: 1,
@@ -275,8 +284,10 @@ export function staleCard(reason: string | null | undefined): FactCard {
   // reason CODE in the title is the discriminator (PLUTUS_NO_* = the graph lane).
   // FIX (audit round-11: null-guarded) — reason.split threw on null/undefined/non-string,
   // losing EVERY card for the file. A refusal path must never throw.
+  // FIX (audit round-13: code allowlisted + capped) — the raw split let `:...` yield an
+  // empty code and unbounded model prose pollute the filterable title. Same bar as JUDGE_DOWN.
   const rs = typeof reason === "string" && reason.length > 0 ? reason : "PLUTUS_NO_STORE: unknown";
-  const code = rs.split(":")[0];
+  const code = /^(PLUTUS_NO_[A-Z]+|JEVK5_DOWN|[A-Z0-9_]+)/.exec(rs)?.[1]?.slice(0, 32) ?? "PLUTUS_NO_STORE";
   return {
     shape: "STALE",
     title: `the canon graph is unavailable [${code}]`,

@@ -60,15 +60,20 @@ export interface Store {
 
 /** Resolve the project root by walking up for a root marker. Absent → PLUTUS_NO_ROOT. */
 export function resolveRoot(startFile: string): string {
+  // FIX (audit round-13: STRONG wins at ANY depth) — the old loop returned a NEAR generic
+  // marker (tsconfig.json at level 0) without ever looking higher for a STRONG one
+  // (.arsumbris 5 levels up), contradicting the comment. Now: walk all 12 levels collecting
+  // the nearest generic, but a STRONG at ANY level wins immediately.
   let dir = dirname(resolve(startFile));
+  let generic: string | null = null;
   for (let i = 0; i < 12; i++) {
-    // FIX (audit store.ts:22): a STRONG marker wins at any depth; a generic one only within 3 levels
     for (const m of STRONG_MARKERS) if (existsSync(join(dir, m))) return dir;
-    if (i < 3) for (const m of ROOT_MARKERS) if (existsSync(join(dir, m))) return dir;
+    if (generic === null && i < 3) for (const m of ROOT_MARKERS) if (existsSync(join(dir, m))) { generic = dir; break; }
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
+  if (generic !== null) return generic;
   throw new Error(`${PLUTUS_NO_ROOT}: no root marker (${ROOT_MARKERS.join(" | ")}) above ${startFile}`);
 }
 
@@ -472,14 +477,28 @@ export function callersOf(store: Store, filePath: string): string[] {
   // same-named files in different dirs (pkg/a/util.ts vs lib/util.ts) and un-normalized
   // ./ ../ targets. Now: normalize slashes + dot segments, then match the target's TAIL
   // against the file's own rooted tail (last 2 segments), case-PRESERVED. Empty dropped.
-  const norm = (p: string): string => String(p ?? "").replace(/\\/g, "/").split("/").filter((s) => s.length > 0 && s !== ".").reduce<string[]>((acc, s) => (s === ".." ? (acc.pop(), acc) : [...acc, s]), []).join("/");
+  // FIX (audit round-13: full-tail match + O(n) norm) — 2 segments still conflated
+  // pkg/a/util.ts vs lib/a/util.ts, and [...acc,s] rebuilt per segment (O(n²)). Now: the
+  // FULL normalized path must match or be a suffix on a SEGMENT boundary (never mid-name),
+  // and norm() pushes in place (O(n)).
+  const norm = (p: string): string => {
+    const acc: string[] = [];
+    for (const seg of String(p ?? "").replace(/\\/g, "/").split("/")) {
+      if (seg.length === 0 || seg === ".") continue;
+      if (seg === "..") { acc.pop(); continue; }
+      acc.push(seg);
+    }
+    return acc.join("/");
+  };
   const fp = norm(filePath);
   if (!fp) return [];
-  const tail = fp.split("/").slice(-2).join("/");
+  const tail = fp;
   const hits = store.relationships.filter((r) => {
     if (r.type !== "imports") return false;
     const t = norm(r.target);
-    return t === fp || t.endsWith(`/${tail}`);
+    if (!t) return false;
+    // a suffix match ONLY on a segment boundary: "a/util.ts" must not match "xa/util.ts"
+    return t === fp || (t.endsWith(tail) && t.endsWith(`/${tail}`));
   });
   // FIX (audit round-11: deterministic order) — sort before slicing so the same graph
   // always yields the same callers.
