@@ -86,3 +86,13 @@
 - LESSON (meta-patterns L5): "the test can encode the defect — when a test asserts the buggy
   behavior as the contract, fixing the code fails the test. CORRECT THE TEST."
 - EVIDENCE: battery 52/0/173; /tmp/a23-debug.ts showing part=CONST stop=true.
+
+## [2026-10-02T00:30] — the silent-catch class + the hottest-path class
+- TWO CLASSES worth naming: (a) the SILENT CATCH (`catch { /* best-effort */ }`) hid a dead
+  receipt rotation for two rounds — a fix used fs functions never imported, and the catch
+  swallowed the ReferenceError; (b) THE CAP-BUT-NOT-ON-THE-HOT-PATH: 10 security findings, every
+  one a cap that existed elsewhere but not on the hottest path (the pre-filter, the network parse,
+  the observability sink, the doc cardinality, the per-keystroke tokenizer, the partial-frame wait,
+  the allowlist's raw side, the skip-path views, the stringify-before-slice, the transient-before-cap).
+- FIX PATTERN: make the failure LOUD; put the cap AT THE ALLOCATION SITE, not one layer up.
+- EVIDENCE: A45 pins all 10; RECEIPT_ROTATE_FAIL/ROTATED prove the loud path.

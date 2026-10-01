@@ -93,3 +93,13 @@
 - WHY: the r20 gate FAIL (0c/7h) — every finding adjudicated + fixed.
 - EVIDENCE: battery 52/0/173; derailment 6/6 (hermetic); scope 7/7; dist a1b73cf11e88dac2.
 - THE AUDIT GATE: r21 BLOCKED (Go 403 / zen-free 429) — recorded, no ship-ready claim.
+
+## [2026-10-02T00:30] — the two independent audits (19 findings) + the security hardening
+- WHAT: the reviewer audit (9: the F-9 rotation imports HIGH, kept/shown, UNKNOWN relevance, pull
+  false-clean, didClose leak, doc-cap, non-Error catch, stale codes, cache bound) + the security
+  audit (10: H1 lawcount 2GB OOM, H2 judge byte/key caps, H3 receipt line amplification, M1 doc
+  cardinality, M2 law-text CPU DoS, M3 stdin slow-loris, M4 raw allowlist, L1 skip-path views,
+  L2 health stringify, L3 buildState transient).
+- WHY: every cap existed SOMEWHERE but not on the HOTTEST path of its surface.
+- EVIDENCE: battery 58/0/196; derailment 6/6; scope 7/7; noise 0.00; dist 0638723b85a564e0.
+- THE CLASS: the audits were fresh-context subagents (the ocr lane is provider-down).
